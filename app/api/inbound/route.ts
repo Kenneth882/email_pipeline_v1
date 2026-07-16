@@ -4,7 +4,7 @@ import {
   summarizeInbound,
   unipileEmailWebhookSchema,
 } from "@/lib/unipile/inbound-payload";
-import { verifyUnipileWebhookSignature } from "@/lib/unipile/verify-webhook";
+import { verifyUnipileWebhook } from "@/lib/unipile/verify-webhook";
 
 export const maxDuration = 60;
 export const runtime = "nodejs";
@@ -19,16 +19,18 @@ export async function GET() {
 
 export async function POST(req: NextRequest) {
   const rawBody = await req.text().catch(() => "");
+  const authHeader = req.headers.get("unipile-auth");
   const signatureHeader = req.headers.get("unipile-signature");
   const secret = process.env.UNIPILE_WEBHOOK_SECRET;
 
-  const verified = verifyUnipileWebhookSignature(
+  const verified = verifyUnipileWebhook({
     rawBody,
+    authHeader,
     signatureHeader,
     secret,
-  );
+  });
   if (!verified.ok) {
-    console.warn("[inbound] signature rejected", { error: verified.error });
+    console.warn("[inbound] auth rejected", { error: verified.error });
     return NextResponse.json(
       { ok: false, error: verified.error },
       { status: verified.status },

@@ -6,6 +6,13 @@ export type VerifyWebhookResult =
   | { ok: true }
   | { ok: false; status: 400 | 401; error: string };
 
+function safeEqualString(a: string, b: string): boolean {
+  const aBuf = Buffer.from(a, "utf8");
+  const bBuf = Buffer.from(b, "utf8");
+  if (aBuf.length !== bBuf.length) return false;
+  return timingSafeEqual(aBuf, bBuf);
+}
+
 /**
  * Verify Unipile `unipile-signature` header against the raw request body.
  * Header format: `t=<unix_seconds>,v0=<hmac_sha256_hex>`
@@ -54,12 +61,7 @@ export function verifyUnipileWebhookSignature(
     .digest("hex");
 
   try {
-    const receivedBuf = Buffer.from(receivedSignature, "utf8");
-    const expectedBuf = Buffer.from(expectedSignature, "utf8");
-    if (
-      receivedBuf.length !== expectedBuf.length ||
-      !timingSafeEqual(receivedBuf, expectedBuf)
-    ) {
+    if (!safeEqualString(receivedSignature, expectedSignature)) {
       return { ok: false, status: 401, error: "Invalid signature" };
     }
   } catch {
@@ -67,4 +69,43 @@ export function verifyUnipileWebhookSignature(
   }
 
   return { ok: true };
+}
+
+type VerifyUnipileWebhookInput = {
+  rawBody: string;
+  authHeader: string | null;
+  signatureHeader: string | null;
+  secret: string | undefined;
+};
+
+/**
+ * Auth order:
+ * 1. Unipile-Auth shared secret (dashboard/API custom header)
+ * 2. Else unipile-signature HMAC (v2 signing)
+ */
+export function verifyUnipileWebhook(
+  input: VerifyUnipileWebhookInput,
+): VerifyWebhookResult {
+  const { rawBody, authHeader, signatureHeader, secret } = input;
+
+  if (!secret) {
+    return { ok: false, status: 401, error: "Missing webhook secret" };
+  }
+
+  if (authHeader) {
+    try {
+      if (!safeEqualString(authHeader, secret)) {
+        return { ok: false, status: 401, error: "Invalid Unipile-Auth" };
+      }
+    } catch {
+      return { ok: false, status: 401, error: "Invalid Unipile-Auth" };
+    }
+    return { ok: true };
+  }
+
+  if (signatureHeader) {
+    return verifyUnipileWebhookSignature(rawBody, signatureHeader, secret);
+  }
+
+  return { ok: false, status: 401, error: "Missing Unipile-Auth or unipile-signature" };
 }
