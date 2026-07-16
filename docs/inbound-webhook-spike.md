@@ -40,7 +40,10 @@ Auth on `/api/inbound`: prefer `Unipile-Auth` matching `UNIPILE_WEBHOOK_SECRET`;
 |---|---|
 | `GET /api/inbound` | `{ ok: true, endpoint: "inbound" }` |
 | POST without / wrong `Unipile-Auth` | 401 |
-| Email **to** linked inbox | 200 `{ received: true, skipped: false }` + Vercel log `[inbound] accepted` |
+| Email **to** linked inbox | 200 `{ received: true, duplicate: false }` + log `[inbound] claimed` + `inbound_messages` row |
+| Same email delivered twice | 200 `{ received: true, duplicate: true }` + still one ledger row |
 | Sent / non-inbox event | 200 `{ received: true, skipped: true }` + log `[inbound] skipped` |
+
+Day 2+: after inbound filter, the handler claims `inbound_messages` with PK = Unipile `email_id` (`status=processing`) and writes `pipeline_events` before ack. DB failures return 500 for redelivery.
 
 Old `/api/gmail-webhook` is removed; do not register that path.

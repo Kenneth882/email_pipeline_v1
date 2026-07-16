@@ -5,9 +5,12 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start"
+    "start": "next start",
+    "migrate:hubspot": "tsx --env-file=.env scripts/migrate-venues-to-hubspot.ts",
+    "test:day2": "tsx --env-file=.env scripts/day2-exit-tests.ts"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.110.7",
     "next": "^15.5.2",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
@@ -17,6 +20,7 @@
     "@types/node": "^22.17.0",
     "@types/react": "^19.1.10",
     "@types/react-dom": "^19.1.7",
+    "tsx": "^4.23.1",
     "typescript": "^5.9.2"
   }
 }

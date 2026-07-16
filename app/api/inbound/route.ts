@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
+import { claimInboundMessage } from "@/lib/inbound/claim";
+import { getSupabaseAdmin } from "@/lib/supabase/server";
 import {
   isInboundEmail,
   summarizeInbound,
@@ -53,7 +55,11 @@ export async function POST(req: NextRequest) {
       issues: payloadResult.error.flatten(),
     });
     // Still ack so Unipile does not hammer retries on unknown shapes during spike.
-    return NextResponse.json({ received: true, skipped: true, reason: "invalid_shape" });
+    return NextResponse.json({
+      received: true,
+      skipped: true,
+      reason: "invalid_shape",
+    });
   }
 
   const payload = payloadResult.data;
@@ -86,8 +92,59 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  // Day 1: log only. Triage / claim-before-LLM comes later.
-  console.info("[inbound] accepted", summary);
+  if (!payload.email_id?.trim()) {
+    console.warn("[inbound] missing email_id", summary);
+    return NextResponse.json(
+      { ok: false, error: "missing_email_id" },
+      { status: 400 },
+    );
+  }
 
-  return NextResponse.json({ received: true, skipped: false });
+  let supabase;
+  try {
+    supabase = getSupabaseAdmin();
+  } catch (err) {
+    console.error("[inbound] supabase config error", err);
+    return NextResponse.json(
+      { ok: false, error: "supabase_not_configured" },
+      { status: 500 },
+    );
+  }
+
+  const claim = await claimInboundMessage(supabase, payload);
+
+  if (!claim.ok) {
+    console.error("[inbound] claim failed", {
+      ...summary,
+      error: claim.error,
+    });
+    return NextResponse.json(
+      { ok: false, error: claim.error },
+      { status: 500 },
+    );
+  }
+
+  if (claim.duplicate) {
+    console.info("[inbound] duplicate", {
+      ...summary,
+      message_id: claim.messageId,
+    });
+    return NextResponse.json({
+      received: true,
+      duplicate: true,
+      skipped: false,
+    });
+  }
+
+  // Claim committed. Triage / CRM Writer come later (Days 5–6).
+  console.info("[inbound] claimed", {
+    ...summary,
+    message_id: claim.messageId,
+  });
+
+  return NextResponse.json({
+    received: true,
+    duplicate: false,
+    skipped: false,
+  });
 }

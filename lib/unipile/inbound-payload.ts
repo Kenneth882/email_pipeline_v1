@@ -15,6 +15,8 @@ export const unipileEmailWebhookSchema = z
     account_id: z.string().optional(),
     event: z.string().optional(),
     message_id: z.string().optional(),
+    /** Unipile/Gmail thread id when present on the webhook payload. */
+    thread_id: z.string().optional(),
     subject: z.string().optional(),
     body: z.string().optional(),
     body_plain: z.string().optional(),
