@@ -46,4 +46,8 @@ Auth on `/api/inbound`: prefer `Unipile-Auth` matching `UNIPILE_WEBHOOK_SECRET`;
 
 Day 2+: after inbound filter, the handler claims `inbound_messages` with PK = Unipile `email_id` (`status=processing`) and writes `pipeline_events` before ack. DB failures return 500 for redelivery.
 
+Day 5+: if `ANTHROPIC_API_KEY` is set, triage runs after claim (quote-strip → Claude → firewall → match stub → finalize ledger). Duplicates never re-triage.
+
+Drip cron: `GET/POST /api/cron/drip` with `Authorization: Bearer $CRON_SECRET` (see `vercel.json`). Default `DRIP_DRY_RUN=true` / `config.paused=true` — only `is_seed` venues are send-eligible.
+
 Old `/api/gmail-webhook` is removed; do not register that path.

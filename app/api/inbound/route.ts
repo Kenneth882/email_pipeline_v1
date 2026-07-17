@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { claimInboundMessage } from "@/lib/inbound/claim";
+import { processClaimedInbound } from "@/lib/inbound/process";
 import { getSupabaseAdmin } from "@/lib/supabase/server";
 import {
   isInboundEmail,
@@ -54,7 +55,6 @@ export async function POST(req: NextRequest) {
     console.warn("[inbound] payload shape unexpected", {
       issues: payloadResult.error.flatten(),
     });
-    // Still ack so Unipile does not hammer retries on unknown shapes during spike.
     return NextResponse.json({
       received: true,
       skipped: true,
@@ -136,15 +136,47 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  // Claim committed. Triage / CRM Writer come later (Days 5–6).
   console.info("[inbound] claimed", {
     ...summary,
     message_id: claim.messageId,
   });
 
+  // Triage after claim (claim-before-LLM). Failures mark inbound error but still 200
+  // once claimed so Unipile does not redeliver and double-spend Claude — reconciliation
+  // / digest surfaces errored rows. Missing ANTHROPIC_API_KEY leaves status=processing.
+  if (process.env.ANTHROPIC_API_KEY) {
+    const processed = await processClaimedInbound(
+      supabase,
+      payload,
+      claim.messageId,
+    );
+    if (!processed.ok) {
+      console.error("[inbound] triage failed", {
+        message_id: claim.messageId,
+        error: processed.error,
+      });
+      return NextResponse.json({
+        received: true,
+        duplicate: false,
+        skipped: false,
+        triaged: false,
+        error: processed.error,
+      });
+    }
+    return NextResponse.json({
+      received: true,
+      duplicate: false,
+      skipped: false,
+      triaged: true,
+    });
+  }
+
+  console.warn("[inbound] ANTHROPIC_API_KEY missing; left status=processing");
   return NextResponse.json({
     received: true,
     duplicate: false,
     skipped: false,
+    triaged: false,
+    reason: "anthropic_not_configured",
   });
 }
