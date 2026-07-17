@@ -69,7 +69,7 @@ export async function runTriage(input: TriageInput): Promise<TriageResult> {
   for (let attempt = 0; attempt < 2; attempt++) {
     const msg = await client.messages.create({
       model: "claude-sonnet-5",
-      max_tokens: 1024,
+      max_tokens: 3024,
       system: SYSTEM,
       messages: [
         {
