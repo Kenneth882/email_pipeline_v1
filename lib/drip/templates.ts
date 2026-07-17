@@ -7,30 +7,30 @@ export function buildOutreachEmail(opts: {
 }): { subject: string; body: string } {
   const hello = opts.contactName?.trim()
     ? `Hi ${opts.contactName.trim().split(/\s+/)[0]},`
-    : "Hi,";
+    : "Hi there,";
 
   if (opts.slot === 1) {
     return {
-      subject: `Private event inquiry — ${opts.venueName}`,
+      subject: "Private event inquiry | August 12th from 6–9pm",
       body: `${hello}
 
-I'm reaching out from VenueHopper about a private event in Chicago (75+ guests, fully private space, AV).
+I'm looking to book a private event for a networking community on Wednesday, August 12th from 6–9pm for 70–80 people, standing. We'd need the space fully private — either a full buyout or a private room.
 
-Would ${opts.venueName} be open to sharing availability and a rough budget range?
+Our budget is around a $1.5k minimum spend for light bites and a beer & wine tab. Ideally, we'd put about $1,000 toward pre-selected food platters and $500 as an initial bar tab for beer and wine only, which we usually add to throughout the event depending on how much people drink.
 
+Would love to hear more details about your space and menu options.
 Thanks,
 Kenneth
-VenueHopper
 `,
     };
   }
 
   if (opts.slot === 2) {
     return {
-      subject: `Re: Private event inquiry — ${opts.venueName}`,
+      subject: "Re: Private event inquiry | August 12th from 6–9pm",
       body: `${hello}
 
-Quick follow-up on my note about a private Chicago event at ${opts.venueName}. Still exploring fit — happy to share more detail if useful.
+Quick follow-up on my note about a private event on Wednesday, August 12th from 6–9pm (70–80 people, standing, fully private). Still exploring fit for ${opts.venueName} — happy to share more detail if useful.
 
 Best,
 Kenneth
@@ -39,10 +39,10 @@ Kenneth
   }
 
   return {
-    subject: `Re: Private event inquiry — ${opts.venueName}`,
+    subject: "Re: Private event inquiry | August 12th from 6–9pm",
     body: `${hello}
 
-Last note from me on the private event inquiry for ${opts.venueName}. If timing is better later, no worries — happy to reconnect whenever.
+Last note from me on the August 12th private event inquiry for ${opts.venueName}. If timing is better later, no worries — happy to reconnect whenever.
 
 Thanks,
 Kenneth
