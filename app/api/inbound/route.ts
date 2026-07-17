@@ -65,7 +65,7 @@ export async function POST(req: NextRequest) {
   const payload = payloadResult.data;
   const summary = summarizeInbound(payload);
 
-  const expectedAccountId = process.env.UNPILE_ACCOUNT_ID;
+  const expectedAccountId = process.env.UNIPILE_ACCOUNT_ID;
   if (
     expectedAccountId &&
     payload.account_id &&

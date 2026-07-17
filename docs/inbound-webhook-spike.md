@@ -4,7 +4,7 @@
 
 1. Push this branch and deploy on Vercel (or `vercel deploy`).
 2. Set env vars in Vercel (same names as `.env.example`):
-   - `UNPILE_API`, `UNPILE_ACCOUNT_ID`, `UNPILE_DSN`
+   - `UNIPILE_API`, `UNIPILE_ACCOUNT_ID`, `UNIPILE_DSN`
    - `UNIPILE_WEBHOOK_SECRET` — the shared secret you put on the webhook as `Unipile-Auth`
 
 ## Register webhook (API — recommended)
@@ -15,8 +15,8 @@ Dashboard-created webhooks often have no visible secret. Create via API with a h
 set -a && source .env && set +a
 
 curl -sS -X POST \
-  "https://${UNPILE_DSN}/api/v1/webhooks" \
-  -H "X-API-KEY: ${UNPILE_API}" \
+  "https://${UNIPILE_DSN}/api/v1/webhooks" \
+  -H "X-API-KEY: ${UNIPILE_API}" \
   -H "Accept: application/json" \
   -H "Content-Type: application/json" \
   -d "{

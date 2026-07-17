@@ -15,8 +15,8 @@ export type UnipileSendResult = {
 };
 
 function unipileBaseUrl(): string {
-  const dsn = process.env.UNPILE_DSN;
-  if (!dsn) throw new Error("Missing UNPILE_DSN");
+  const dsn = process.env.UNIPILE_DSN;
+  if (!dsn) throw new Error("Missing UNIPILE_DSN");
   if (dsn.startsWith("http://") || dsn.startsWith("https://")) return dsn;
   return `https://${dsn}`;
 }
@@ -36,10 +36,10 @@ function pickString(obj: Record<string, unknown>, keys: string[]): string | null
 export async function sendUnipileEmail(
   input: UnipileSendInput,
 ): Promise<UnipileSendResult> {
-  const apiKey = process.env.UNPILE_API;
-  const accountId = process.env.UNPILE_ACCOUNT_ID;
+  const apiKey = process.env.UNIPILE_API;
+  const accountId = process.env.UNIPILE_ACCOUNT_ID;
   if (!apiKey || !accountId) {
-    throw new Error("Missing UNPILE_API or UNPILE_ACCOUNT_ID");
+    throw new Error("Missing UNIPILE_API or UNIPILE_ACCOUNT_ID");
   }
 
   const payload: Record<string, unknown> = {
@@ -110,8 +110,8 @@ export async function sendUnipileEmail(
 export async function fetchUnipileEmail(
   emailId: string,
 ): Promise<Record<string, unknown>> {
-  const apiKey = process.env.UNPILE_API;
-  if (!apiKey) throw new Error("Missing UNPILE_API");
+  const apiKey = process.env.UNIPILE_API;
+  if (!apiKey) throw new Error("Missing UNIPILE_API");
 
   const res = await fetch(
     `${unipileBaseUrl()}/api/v1/emails/${encodeURIComponent(emailId)}`,
