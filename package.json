@@ -9,6 +9,7 @@
     "migrate:hubspot": "node --env-file=.env --import tsx scripts/migrate-venues-to-hubspot.ts",
     "test:day2": "node --env-file=.env --import tsx scripts/day2-exit-tests.ts",
     "test:day3": "node --env-file=.env --import tsx scripts/day3-exit-tests.ts",
+    "test:day5": "node --import tsx scripts/day5-crm-exit-tests.ts",
     "test:drip-dry": "node --env-file=.env --import tsx scripts/drip-dry-run.ts",
     "seed:upsert": "node --env-file=.env --import tsx scripts/upsert-seed-venues.ts"
   },

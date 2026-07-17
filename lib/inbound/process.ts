@@ -1,9 +1,13 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { matchInboundToVenue } from "@/lib/crm/match";
+import { runCrmWriter } from "@/lib/crm/writer";
 import { stripQuotedHistory } from "@/lib/email/strip-quotes";
 import { runTriage } from "@/lib/triage/run";
 import type { UnipileEmailWebhook } from "@/lib/unipile/inbound-payload";
-import { fetchUnipileEmail } from "@/lib/unipile/send";
+import {
+  extractReplyMessageIdHeaders,
+  fetchUnipileEmail,
+} from "@/lib/unipile/send";
 
 function asString(v: unknown): string {
   return typeof v === "string" ? v : "";
@@ -23,14 +27,16 @@ function attachmentsFrom(
       const obj = a as Record<string, unknown>;
       return {
         filename: asString(obj.filename || obj.name || "attachment"),
-        mimeType: asString(obj.mime || obj.mime_type || obj.content_type || "application/octet-stream"),
+        mimeType: asString(
+          obj.mime || obj.mime_type || obj.content_type || "application/octet-stream",
+        ),
       };
     })
     .filter((a) => a.filename);
 }
 
 /**
- * After claim: triage + match + finalize inbound_messages.
+ * After claim: triage + match + finalize inbound_messages + CRM Writer dual-write.
  * Does not invoke Drafting Agent (Day 7+).
  */
 export async function processClaimedInbound(
@@ -69,6 +75,7 @@ export async function processClaimedInbound(
       null;
 
     const attachments = attachmentsFrom(payload, full);
+    const inReplyToHeaders = extractReplyMessageIdHeaders(full);
 
     const triage = await runTriage({
       threadId,
@@ -80,10 +87,10 @@ export async function processClaimedInbound(
     const match = await matchInboundToVenue(supabase, {
       threadId,
       senderEmail,
+      inReplyToHeaders,
     });
 
-    const venueId =
-      match.confidence === "NONE" ? null : match.venueId;
+    const venueId = match.venueId;
 
     // auto_reply must NOT cancel follow-ups (do not set last_inbound_at)
     const shouldTouchInbound =
@@ -142,6 +149,30 @@ export async function processClaimedInbound(
         match,
       },
     });
+
+    // CRM Writer: HubSpot contact props + stage (after ledger finalize)
+    if (venueId && match.confidence !== "NONE") {
+      const crm = await runCrmWriter({
+        supabase,
+        venueId,
+        messageId,
+        threadId,
+        triage,
+        match,
+      });
+      if (!crm.ok) {
+        console.error("[crm] writer failed", {
+          message_id: messageId,
+          venue_id: venueId,
+          error: crm.error,
+        });
+        await supabase
+          .from("inbound_messages")
+          .update({ needs_human_review: true })
+          .eq("message_id", messageId);
+        // Triage succeeded; CRM failure surfaces via digest / needs_review — still ok
+      }
+    }
 
     return { ok: true };
   } catch (err) {

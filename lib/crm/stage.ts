@@ -1,3 +1,5 @@
+import { hs } from "@/lib/crm/hubspot";
+
 type HsDeal = {
   id: string;
   properties: { dealstage?: string; pipeline?: string };
@@ -9,39 +11,42 @@ type Pipeline = {
   stages: Array<{ id: string; label: string }>;
 };
 
-const STAGE_LABELS: Record<string, string[]> = {
+export const STAGE_LABELS: Record<string, string[]> = {
   "0_sourced": ["0 sourced", "0_sourced"],
   "1_contacted": ["1 contacted", "1_contacted"],
+  "2_responded": ["2 responded", "2_responded"],
+  "3_in_icp": ["3 in icp", "3_in_icp"],
+  "4_proposal_received": ["4 proposal received", "4_proposal_received"],
+  "5_partnership_interest": [
+    "5 partnership interest",
+    "5_partnership_interest",
+  ],
+  "6_call_scheduled": ["6 call scheduled", "6_call_scheduled"],
+  "7_call_completed": ["7 call completed", "7_call_completed"],
+  "8_onboarded": ["8 onboarded", "8_onboarded"],
+  lost: ["lost"],
+  bounced: ["bounced"],
   needs_review: ["needs review", "needs_review"],
 };
 
+export type StageCacheKey = keyof typeof STAGE_LABELS;
+
+/** Forward funnel order (index used for whitelist forward checks). */
+const FUNNEL_ORDER: StageCacheKey[] = [
+  "0_sourced",
+  "1_contacted",
+  "2_responded",
+  "3_in_icp",
+  "4_proposal_received",
+  "5_partnership_interest",
+  "6_call_scheduled",
+  "7_call_completed",
+  "8_onboarded",
+];
+
+const CLOSED: StageCacheKey[] = ["lost", "bounced", "needs_review"];
+
 let pipelineCache: Pipeline[] | null = null;
-
-async function hs<T>(
-  method: string,
-  path: string,
-  body?: unknown,
-): Promise<T> {
-  const token = process.env.HUBSPOT_ACCESS_TOKEN;
-  if (!token) throw new Error("Missing HUBSPOT_ACCESS_TOKEN");
-
-  const res = await fetch(`https://api.hubapi.com${path}`, {
-    method,
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
-      Accept: "application/json",
-    },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
-
-  const text = await res.text();
-  const json = text ? JSON.parse(text) : {};
-  if (!res.ok) {
-    throw new Error(`HubSpot ${method} ${path} → ${res.status}: ${text}`);
-  }
-  return json as T;
-}
 
 async function listPipelines(): Promise<Pipeline[]> {
   if (pipelineCache) return pipelineCache;
@@ -53,12 +58,43 @@ async function listPipelines(): Promise<Pipeline[]> {
   return pipelineCache;
 }
 
+/** Clear cached pipelines (tests). */
+export function clearPipelineCache(): void {
+  pipelineCache = null;
+}
+
 function normalizeLabel(label: string): string {
   return label.trim().toLowerCase().replace(/\s+/g, " ");
 }
 
+export function funnelIndex(key: string | null | undefined): number {
+  if (!key) return -1;
+  return FUNNEL_ORDER.indexOf(key as StageCacheKey);
+}
+
+/**
+ * Pure whitelist: forward funnel moves, or jumps to closed variants.
+ * Same stage is always allowed (no-op).
+ */
+export function isTransitionAllowed(
+  from: string | null,
+  to: StageCacheKey,
+): boolean {
+  if (!from) return true;
+  if (from === to) return true;
+
+  if (CLOSED.includes(to)) return true;
+
+  const fromIdx = funnelIndex(from);
+  const toIdx = funnelIndex(to);
+  if (fromIdx < 0 || toIdx < 0) return false;
+
+  // Allow forward or same-depth lateral within funnel (e.g. 2→3, 2→4)
+  return toIdx >= fromIdx;
+}
+
 export async function resolveStageId(
-  cacheKey: keyof typeof STAGE_LABELS,
+  cacheKey: StageCacheKey,
 ): Promise<{ pipelineId: string; stageId: string; label: string }> {
   const want = STAGE_LABELS[cacheKey];
   const pipelines = await listPipelines();
@@ -102,82 +138,93 @@ export async function getDealStage(dealId: string): Promise<{
   return { stageId, pipelineId, cacheKey };
 }
 
-/**
- * Advance deal 0_sourced → 1_contacted with HubSpot-authoritative reconciliation.
- * Illegal / unexpected transitions → Needs Review.
- */
-export async function advanceToContacted(opts: {
-  dealId: string;
-  stageCache: string | null;
-}): Promise<{
+export type AdvanceDealResult = {
   ok: boolean;
   fromCache: string | null;
   hubspotCacheKey: string | null;
   conflict: boolean;
   movedTo: string | null;
   error?: string;
-}> {
+};
+
+/**
+ * Advance deal to target with HubSpot-authoritative reconciliation.
+ * Illegal transitions → Needs Review.
+ */
+export async function advanceDealStage(opts: {
+  dealId: string;
+  stageCache: string | null;
+  target: StageCacheKey;
+}): Promise<AdvanceDealResult> {
   const fresh = await getDealStage(opts.dealId);
   const fromCache = opts.stageCache;
   const conflict =
-    !!fromCache &&
-    !!fresh.cacheKey &&
-    fromCache !== fresh.cacheKey;
+    !!fromCache && !!fresh.cacheKey && fromCache !== fresh.cacheKey;
 
   const effective = fresh.cacheKey ?? fromCache ?? "0_sourced";
 
-  if (effective === "1_contacted") {
+  if (effective === opts.target) {
     return {
       ok: true,
       fromCache,
       hubspotCacheKey: fresh.cacheKey,
       conflict,
-      movedTo: "1_contacted",
+      movedTo: opts.target,
     };
   }
 
-  if (effective !== "0_sourced") {
-    try {
-      const needs = await resolveStageId("needs_review");
-      await hs("PATCH", `/crm/v3/objects/deals/${opts.dealId}`, {
-        properties: {
-          dealstage: needs.stageId,
-          pipeline: needs.pipelineId,
-        },
-      });
+  const allowed = isTransitionAllowed(effective, opts.target);
+  const writeTo: StageCacheKey = allowed ? opts.target : "needs_review";
+
+  try {
+    const stage = await resolveStageId(writeTo);
+    await hs("PATCH", `/crm/v3/objects/deals/${opts.dealId}`, {
+      properties: {
+        dealstage: stage.stageId,
+        pipeline: stage.pipelineId,
+      },
+    });
+
+    if (!allowed) {
       return {
         ok: false,
         fromCache,
         hubspotCacheKey: fresh.cacheKey,
         conflict,
         movedTo: "needs_review",
-        error: `illegal_transition_from_${effective}`,
-      };
-    } catch (err) {
-      return {
-        ok: false,
-        fromCache,
-        hubspotCacheKey: fresh.cacheKey,
-        conflict,
-        movedTo: null,
-        error: err instanceof Error ? err.message : String(err),
+        error: `illegal_transition_from_${effective}_to_${opts.target}`,
       };
     }
+
+    return {
+      ok: true,
+      fromCache,
+      hubspotCacheKey: fresh.cacheKey,
+      conflict,
+      movedTo: writeTo,
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      fromCache,
+      hubspotCacheKey: fresh.cacheKey,
+      conflict,
+      movedTo: null,
+      error: err instanceof Error ? err.message : String(err),
+    };
   }
+}
 
-  const contacted = await resolveStageId("1_contacted");
-  await hs("PATCH", `/crm/v3/objects/deals/${opts.dealId}`, {
-    properties: {
-      dealstage: contacted.stageId,
-      pipeline: contacted.pipelineId,
-    },
+/**
+ * Advance deal 0_sourced → 1_contacted (drip). Thin wrapper over advanceDealStage.
+ */
+export async function advanceToContacted(opts: {
+  dealId: string;
+  stageCache: string | null;
+}): Promise<AdvanceDealResult> {
+  return advanceDealStage({
+    dealId: opts.dealId,
+    stageCache: opts.stageCache,
+    target: "1_contacted",
   });
-
-  return {
-    ok: true,
-    fromCache,
-    hubspotCacheKey: fresh.cacheKey,
-    conflict,
-    movedTo: "1_contacted",
-  };
 }

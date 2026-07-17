@@ -113,15 +113,17 @@ export async function fetchUnipileEmail(
   const apiKey = process.env.UNIPILE_API;
   if (!apiKey) throw new Error("Missing UNIPILE_API");
 
-  const res = await fetch(
+  const url = new URL(
     `${unipileBaseUrl()}/api/v1/emails/${encodeURIComponent(emailId)}`,
-    {
-      headers: {
-        "X-API-KEY": apiKey,
-        Accept: "application/json",
-      },
-    },
   );
+  url.searchParams.set("include_headers", "true");
+
+  const res = await fetch(url.toString(), {
+    headers: {
+      "X-API-KEY": apiKey,
+      Accept: "application/json",
+    },
+  });
 
   const text = await res.text();
   let json: Record<string, unknown> = {};
@@ -138,4 +140,52 @@ export async function fetchUnipileEmail(
   }
 
   return json;
+}
+
+/**
+ * Extract RFC Message-IDs from In-Reply-To / References for outbound matching.
+ */
+export function extractReplyMessageIdHeaders(
+  email: Record<string, unknown> | null | undefined,
+): string[] {
+  if (!email) return [];
+
+  const found = new Set<string>();
+
+  const pushIds = (raw: string) => {
+    const matches = raw.match(/<[^>]+>/g);
+    if (matches) {
+      for (const m of matches) found.add(m.trim());
+    } else {
+      const t = raw.trim();
+      if (t) found.add(t.startsWith("<") ? t : `<${t}>`);
+    }
+  };
+
+  const inReplyTo = email.in_reply_to;
+  if (typeof inReplyTo === "string") {
+    pushIds(inReplyTo);
+  } else if (inReplyTo && typeof inReplyTo === "object") {
+    const obj = inReplyTo as Record<string, unknown>;
+    const mid = obj.message_id ?? obj.id;
+    if (typeof mid === "string" && mid.trim()) pushIds(mid);
+  }
+
+  const headers = email.headers;
+  if (Array.isArray(headers)) {
+    for (const h of headers) {
+      if (!h || typeof h !== "object") continue;
+      const row = h as Record<string, unknown>;
+      const name = String(row.name ?? row.key ?? "").toLowerCase();
+      const value = String(row.value ?? "");
+      if (
+        (name === "in-reply-to" || name === "references") &&
+        value.trim()
+      ) {
+        pushIds(value);
+      }
+    }
+  }
+
+  return [...found];
 }
