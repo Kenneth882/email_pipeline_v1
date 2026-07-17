@@ -132,6 +132,36 @@ function targetStageCases() {
     "rejection → lost",
   );
   assert(
+    resolveTargetStage(
+      baseTriage({
+        extracted: {
+          min_spend_usd: 10000,
+          fully_private: true,
+          capacity_ok: true,
+          proposed_dates: [],
+          key_details: [],
+        },
+      }),
+      false,
+    ) === "lost",
+    "hard fail spend → lost",
+  );
+  assert(
+    resolveTargetStage(
+      baseTriage({
+        extracted: {
+          min_spend_usd: 2000,
+          fully_private: true,
+          capacity_ok: false,
+          proposed_dates: [],
+          key_details: [],
+        },
+      }),
+      false,
+    ) === "lost",
+    "hard fail capacity → lost",
+  );
+  assert(
     resolveTargetStage(baseTriage({ classification: "proposal" }), true) ===
       "4_proposal_received",
     "proposal → 4",

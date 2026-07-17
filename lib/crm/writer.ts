@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { updateContactProperties } from "@/lib/crm/hubspot";
-import { computeIcpVerdict } from "@/lib/crm/icp";
+import { computeIcpVerdict, isHardIcpFail } from "@/lib/crm/icp";
 import type { MatchResult } from "@/lib/crm/match";
 import {
   advanceDealStage,
@@ -31,6 +31,7 @@ export function resolveTargetStage(
 
   if (triage.classification === "bounce") return "bounced";
   if (triage.classification === "rejection") return "lost";
+  if (isHardIcpFail(triage.extracted)) return "lost";
 
   if (
     triage.classification === "contract" ||
@@ -66,7 +67,7 @@ export function buildReviewReason(triage: TriageResult): string {
 
 /**
  * Dual-write HubSpot contact props + deal stage after triage finalize.
- * Does not invoke Drafting Agent (Day 7+).
+ * Drafting Agent is invoked by inbound process when reply intent is draftable.
  */
 export async function runCrmWriter(opts: {
   supabase: SupabaseClient;
@@ -195,9 +196,6 @@ export async function runCrmWriter(opts: {
         match_tier: match.tier,
       },
     });
-
-    // TODO Day 7+: if triage.reply_required && venueId → invoke Drafting Agent
-    // with { venue_id, message_id } only.
 
     return {
       ok: stageResult ? stageResult.ok || stageResult.movedTo === "needs_review" : true,

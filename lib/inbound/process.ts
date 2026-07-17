@@ -1,6 +1,8 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { matchInboundToVenue } from "@/lib/crm/match";
 import { runCrmWriter } from "@/lib/crm/writer";
+import { runDraftingAgent } from "@/lib/draft/agent";
+import { resolveReplyIntent } from "@/lib/draft/intent";
 import { stripQuotedHistory } from "@/lib/email/strip-quotes";
 import { runTriage } from "@/lib/triage/run";
 import type { UnipileEmailWebhook } from "@/lib/unipile/inbound-payload";
@@ -36,8 +38,7 @@ function attachmentsFrom(
 }
 
 /**
- * After claim: triage + match + finalize inbound_messages + CRM Writer dual-write.
- * Does not invoke Drafting Agent (Day 7+).
+ * After claim: triage + match + finalize inbound_messages + CRM Writer + Drafting Agent.
  */
 export async function processClaimedInbound(
   supabase: SupabaseClient,
@@ -91,6 +92,12 @@ export async function processClaimedInbound(
     });
 
     const venueId = match.venueId;
+    const intentResult = resolveReplyIntent(triage);
+    const replyRequired =
+      triage.reply_required &&
+      intentResult.draftable &&
+      match.confidence !== "NONE" &&
+      !!venueId;
 
     // auto_reply must NOT cancel follow-ups (do not set last_inbound_at)
     const shouldTouchInbound =
@@ -125,10 +132,7 @@ export async function processClaimedInbound(
         extraction: triage.extracted,
         confidence: triage.confidence,
         needs_human_review: triage.needs_human_review,
-        reply_required:
-          triage.reply_required &&
-          match.confidence !== "NONE" &&
-          !!venueId,
+        reply_required: replyRequired,
         status: "done",
         processed_at: new Date().toISOString(),
       })
@@ -145,7 +149,8 @@ export async function processClaimedInbound(
         classification: triage.classification,
         confidence: triage.confidence,
         needs_human_review: triage.needs_human_review,
-        reply_required: triage.reply_required,
+        reply_required: replyRequired,
+        reply_intent: intentResult.intent,
         match,
       },
     });
@@ -171,6 +176,30 @@ export async function processClaimedInbound(
           .update({ needs_human_review: true })
           .eq("message_id", messageId);
         // Triage succeeded; CRM failure surfaces via digest / needs_review — still ok
+      }
+
+      if (intentResult.intent === "close_lost") {
+        await supabase.from("pipeline_events").insert({
+          venue_id: venueId,
+          message_id: messageId,
+          actor: "drafter",
+          event: "lost_no_draft",
+          detail: { intent: "close_lost" },
+        });
+      } else if (crm.ok && replyRequired) {
+        const draft = await runDraftingAgent({
+          supabase,
+          venueId,
+          messageId,
+          triage,
+        });
+        if (!draft.ok) {
+          console.error("[drafter] failed", {
+            message_id: messageId,
+            venue_id: venueId,
+            error: draft.error,
+          });
+        }
       }
     }
 

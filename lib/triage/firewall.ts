@@ -1,3 +1,4 @@
+import { isHardIcpFail } from "@/lib/crm/icp";
 import type { TriageInput, TriageResult } from "@/lib/triage/schema";
 
 const CONTRACT_BODY_RE =
@@ -7,7 +8,7 @@ const DOC_MIME_RE =
   /(pdf|msword|officedocument|application\/vnd\.|application\/msword)/i;
 
 /**
- * Hard contract firewall + confidence / auto_reply rules (code, not prompt).
+ * Hard contract firewall + confidence / auto_reply / lost-no-draft rules (code, not prompt).
  */
 export function applyTriageFirewall(
   result: TriageResult,
@@ -48,6 +49,11 @@ export function applyTriageFirewall(
 
   if (next.classification === "bounce") {
     next.needs_human_review = true;
+    next.reply_required = false;
+  }
+
+  // Lost suits: no draft (rejection or hard commercial fail).
+  if (next.classification === "rejection" || isHardIcpFail(next.extracted)) {
     next.reply_required = false;
   }
 
