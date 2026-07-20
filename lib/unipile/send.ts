@@ -142,6 +142,76 @@ export async function fetchUnipileEmail(
   return json;
 }
 
+/** Normalize Unipile list-emails payloads to an array of email objects. */
+export function normalizeUnipileEmailList(json: unknown): Record<string, unknown>[] {
+  if (Array.isArray(json)) {
+    return json.filter(
+      (row): row is Record<string, unknown> =>
+        !!row && typeof row === "object" && !Array.isArray(row),
+    );
+  }
+  if (!json || typeof json !== "object") return [];
+  const obj = json as Record<string, unknown>;
+  for (const key of ["items", "emails", "data", "results"] as const) {
+    const v = obj[key];
+    if (Array.isArray(v)) {
+      return v.filter(
+        (row): row is Record<string, unknown> =>
+          !!row && typeof row === "object" && !Array.isArray(row),
+      );
+    }
+  }
+  return [];
+}
+
+/**
+ * List recent emails in a Unipile thread (most recent first).
+ * GET /api/v1/emails?account_id=&thread_id=&limit=
+ */
+export async function fetchUnipileThreadEmails(
+  threadId: string,
+  limit = 3,
+): Promise<Record<string, unknown>[]> {
+  const apiKey = process.env.UNIPILE_API;
+  const accountId = process.env.UNIPILE_ACCOUNT_ID;
+  if (!apiKey || !accountId) {
+    throw new Error("Missing UNIPILE_API or UNIPILE_ACCOUNT_ID");
+  }
+  if (!threadId.trim()) {
+    throw new Error("Missing thread_id");
+  }
+
+  const url = new URL(`${unipileBaseUrl()}/api/v1/emails`);
+  url.searchParams.set("account_id", accountId);
+  url.searchParams.set("thread_id", threadId);
+  url.searchParams.set("limit", String(Math.max(1, Math.min(limit, 20))));
+
+  const res = await fetch(url.toString(), {
+    headers: {
+      "X-API-KEY": apiKey,
+      Accept: "application/json",
+    },
+  });
+
+  const text = await res.text();
+  let json: unknown = {};
+  if (text) {
+    try {
+      json = JSON.parse(text);
+    } catch {
+      json = { raw: text };
+    }
+  }
+
+  if (!res.ok) {
+    throw new Error(
+      `Unipile list emails ${res.status}: ${JSON.stringify(json)}`,
+    );
+  }
+
+  return normalizeUnipileEmailList(json).slice(0, limit);
+}
+
 /**
  * Extract RFC Message-IDs from In-Reply-To / References for outbound matching.
  */

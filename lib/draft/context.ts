@@ -1,5 +1,11 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
+  formatKnownFacts,
+  mergeIcpExtracted,
+  type ExtractedMemory,
+} from "@/lib/crm/icp";
+import { loadPriorExtractions } from "@/lib/crm/prior-extraction";
+import {
   isDraftableIntent,
   resolveReplyIntent,
   type ReplyIntentResult,
@@ -8,7 +14,10 @@ import { EVENT_BRIEF, formatStatedBudget } from "@/lib/event-brief";
 import { stripQuotedHistory } from "@/lib/email/strip-quotes";
 import type { TriageResult } from "@/lib/triage/schema";
 import { triageResultSchema } from "@/lib/triage/schema";
-import { fetchUnipileEmail } from "@/lib/unipile/send";
+import {
+  fetchUnipileEmail,
+  fetchUnipileThreadEmails,
+} from "@/lib/unipile/send";
 
 export type DraftContext = {
   venueId: string;
@@ -20,15 +29,59 @@ export type DraftContext = {
   subject: string;
   replyToMessageId: string;
   sentFromAddress: string | null;
+  /** Triage with merged ICP extract (thread memory). */
   triage: TriageResult;
   intentResult: ReplyIntentResult;
   recentThread: string;
+  knownFacts: string;
   eventBriefText: string;
   playbook: string;
 };
 
+const PER_MESSAGE_CHARS = 800;
+
 function asString(v: unknown): string {
   return typeof v === "string" ? v : "";
+}
+
+function senderIdentifier(email: Record<string, unknown>): string {
+  const from = email.from_attendee;
+  if (from && typeof from === "object") {
+    const id = (from as { identifier?: string }).identifier;
+    if (typeof id === "string") return id.toLowerCase().trim();
+  }
+  const fromEmail = email.from;
+  if (typeof fromEmail === "string") return fromEmail.toLowerCase().trim();
+  return "";
+}
+
+/**
+ * Format last N thread messages oldest→newest for the draft prompt.
+ * Pure helper for tests + loadDraftContext.
+ */
+export function formatThreadMessagesForDraft(
+  messagesNewestFirst: Record<string, unknown>[],
+  opts: { ourAddresses: string[]; maxPerMessage?: number },
+): string {
+  const max = opts.maxPerMessage ?? PER_MESSAGE_CHARS;
+  const ours = new Set(
+    opts.ourAddresses.map((a) => a.toLowerCase().trim()).filter(Boolean),
+  );
+
+  const chronological = [...messagesNewestFirst].reverse();
+  const blocks: string[] = [];
+
+  for (const msg of chronological) {
+    const from = senderIdentifier(msg);
+    const role = from && ours.has(from) ? "Us" : "Venue";
+    const subject = asString(msg.subject) || "(no subject)";
+    const body = stripQuotedHistory(
+      asString(msg.body_plain) || asString(msg.body),
+    ).slice(0, max);
+    blocks.push(`[${role}] subject: ${subject}\n${body || "(empty)"}`);
+  }
+
+  return blocks.length ? blocks.join("\n\n---\n\n") : "";
 }
 
 function buildPlaybook(intentResult: ReplyIntentResult): string {
@@ -40,7 +93,7 @@ function buildPlaybook(intentResult: ReplyIntentResult): string {
       return [
         "Intent: ask_missing.",
         `Ask ONLY for these missing fields: ${intentResult.missing.join(", ") || "(none)"}.`,
-        "Do not re-ask facts already known in extracted / key_details.",
+        "Do not re-ask facts already listed under Known facts.",
         "Keep the ask short and specific.",
       ].join("\n");
     case "negotiate":
@@ -48,11 +101,13 @@ function buildPlaybook(intentResult: ReplyIntentResult): string {
         "Intent: negotiate.",
         `Our stated budget in outreach is ~${budget} min spend.`,
         `ICP hard ceiling is $${EVENT_BRIEF.icpMaxSpendUsd} — do not accept above that.`,
+        "Respond to the LATEST commercial move in the thread (e.g. price tied to a different date).",
         intentResult.dateConflict
-          ? `Date conflict: primary ${EVENT_BRIEF.primaryDateLabel} may not work. Offer alternatives: ${alts}.`
+          ? `Date conflict: primary ${EVENT_BRIEF.primaryDateLabel} may not work. Offer alternatives: ${alts}. Ask whether their offered price still applies on our dates.`
           : "Primary date still preferred unless they offered other dates.",
         `If their min spend is above ${budget} but ≤ $${EVENT_BRIEF.icpMaxSpendUsd}, ask whether they can work toward ~${budget} (food + beer/wine tab).`,
         "Never invent discounts, comps, or terms not in the event brief.",
+        "Do not re-ask privacy, capacity, or spend already listed under Known facts.",
       ].join("\n");
     case "confirm_fit":
       return [
@@ -60,6 +115,7 @@ function buildPlaybook(intentResult: ReplyIntentResult): string {
         "Confirm we are a good fit on privacy, capacity, and spend.",
         "Ask for formal proposal / deposit terms / AV confirmation as a clear next step.",
         "Do not negotiate price unless they raise a new constraint.",
+        "Do not re-ask facts already listed under Known facts.",
       ].join("\n");
     default:
       return "Intent: none — do not draft.";
@@ -101,7 +157,7 @@ export async function loadDraftContext(
     throw new Error("venue_id_mismatch");
   }
 
-  const triage = triageResultSchema.parse({
+  const currentTriage = triageResultSchema.parse({
     thread_id: inbound.thread_id,
     classification: inbound.classification,
     extracted: inbound.extraction ?? {},
@@ -109,6 +165,28 @@ export async function loadDraftContext(
     needs_human_review: inbound.needs_human_review ?? false,
     reply_required: inbound.reply_required ?? false,
   });
+
+  let prior: ExtractedMemory = {};
+  try {
+    prior = await loadPriorExtractions(supabase, {
+      venueId,
+      threadId: inbound.thread_id,
+      excludeMessageId: messageId,
+    });
+  } catch {
+    prior = {};
+  }
+
+  const mergedExtracted = mergeIcpExtracted(prior, currentTriage.extracted);
+  const triage: TriageResult = {
+    ...currentTriage,
+    extracted: {
+      ...currentTriage.extracted,
+      ...mergedExtracted,
+      proposed_dates: mergedExtracted.proposed_dates ?? [],
+      key_details: mergedExtracted.key_details ?? [],
+    },
+  };
 
   const intentResult = resolveReplyIntent(triage);
   if (!isDraftableIntent(intentResult.intent)) {
@@ -132,30 +210,64 @@ export async function loadDraftContext(
     .limit(1)
     .maybeSingle();
 
+  const sentFromAddress =
+    outbound?.sent_from_address ??
+    process.env.SENT_FROM_ADDRESS?.trim() ??
+    null;
+
   let subject = "Re: Private event inquiry";
-  let bodyPlain = "";
+  let recentThread = "";
+
   try {
-    const full = await fetchUnipileEmail(messageId);
-    const rawSubject = asString(full.subject);
-    if (rawSubject) {
-      subject = rawSubject.toLowerCase().startsWith("re:")
-        ? rawSubject
-        : `Re: ${rawSubject}`;
+    const threadMsgs = await fetchUnipileThreadEmails(inbound.thread_id, 3);
+    if (threadMsgs.length > 0) {
+      const ourAddresses = [
+        sentFromAddress,
+        process.env.SENT_FROM_ADDRESS,
+      ].filter((a): a is string => !!a && a.trim().length > 0);
+
+      recentThread = formatThreadMessagesForDraft(threadMsgs, {
+        ourAddresses,
+      });
+
+      const newest = threadMsgs[0];
+      const rawSubject = asString(newest?.subject);
+      if (rawSubject) {
+        subject = rawSubject.toLowerCase().startsWith("re:")
+          ? rawSubject
+          : `Re: ${rawSubject}`;
+      }
     }
-    bodyPlain = stripQuotedHistory(
-      asString(full.body_plain) || asString(full.body),
-    );
   } catch {
-    // Context still usable with triage extraction alone.
+    // Fall through to single-message fetch.
+  }
+
+  if (!recentThread) {
+    let bodyPlain = "";
+    try {
+      const full = await fetchUnipileEmail(messageId);
+      const rawSubject = asString(full.subject);
+      if (rawSubject) {
+        subject = rawSubject.toLowerCase().startsWith("re:")
+          ? rawSubject
+          : `Re: ${rawSubject}`;
+      }
+      bodyPlain = stripQuotedHistory(
+        asString(full.body_plain) || asString(full.body),
+      );
+    } catch {
+      // Context still usable with triage extraction alone.
+    }
+    recentThread = [
+      `Inbound subject: ${subject}`,
+      `Inbound body (stripped):\n${bodyPlain.slice(0, 2000) || "(empty)"}`,
+    ].join("\n\n");
   }
 
   const senderEmail = (inbound.sender_email || "").toLowerCase().trim();
   if (!senderEmail) throw new Error("missing_sender_email");
 
-  const recentThread = [
-    `Inbound subject: ${subject}`,
-    `Inbound body (stripped):\n${bodyPlain.slice(0, 2000) || "(empty)"}`,
-  ].join("\n\n");
+  const knownFacts = formatKnownFacts(mergedExtracted);
 
   return {
     venueId,
@@ -166,10 +278,11 @@ export async function loadDraftContext(
     senderEmail,
     subject,
     replyToMessageId: messageId,
-    sentFromAddress: outbound?.sent_from_address ?? null,
+    sentFromAddress,
     triage,
     intentResult,
     recentThread,
+    knownFacts,
     eventBriefText: buildEventBriefText(),
     playbook: buildPlaybook(intentResult),
   };

@@ -1,5 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { matchInboundToVenue } from "@/lib/crm/match";
+import { mergeIcpExtracted } from "@/lib/crm/icp";
+import { loadPriorExtractions } from "@/lib/crm/prior-extraction";
 import { runCrmWriter } from "@/lib/crm/writer";
 import { runDraftingAgent } from "@/lib/draft/agent";
 import { resolveReplyIntent } from "@/lib/draft/intent";
@@ -92,7 +94,35 @@ export async function processClaimedInbound(
     });
 
     const venueId = match.venueId;
-    const intentResult = resolveReplyIntent(triage);
+
+    // Thread ICP memory: merge prior extracts so follow-ups don't wipe settled fields.
+    let prior = {};
+    if (venueId) {
+      try {
+        prior = await loadPriorExtractions(supabase, {
+          venueId,
+          threadId,
+          excludeMessageId: messageId,
+        });
+      } catch (err) {
+        console.warn(
+          "[triage] prior extractions failed; using current only",
+          err,
+        );
+      }
+    }
+    const mergedExtracted = mergeIcpExtracted(prior, triage.extracted);
+    const triageForDecisions = {
+      ...triage,
+      extracted: {
+        ...triage.extracted,
+        ...mergedExtracted,
+        proposed_dates: mergedExtracted.proposed_dates ?? [],
+        key_details: mergedExtracted.key_details ?? [],
+      },
+    };
+
+    const intentResult = resolveReplyIntent(triageForDecisions);
     const replyRequired =
       triage.reply_required &&
       intentResult.draftable &&
@@ -121,6 +151,7 @@ export async function processClaimedInbound(
         .eq("id", venueId);
     }
 
+    // Persist THIS message's extract for audit; decisions use merged.
     const { error: updErr } = await supabase
       .from("inbound_messages")
       .update({
@@ -152,17 +183,19 @@ export async function processClaimedInbound(
         reply_required: replyRequired,
         reply_intent: intentResult.intent,
         match,
+        merged_icp: mergedExtracted,
       },
     });
 
     // CRM Writer: HubSpot contact props + stage (after ledger finalize)
+    // Pass merged extract so HubSpot ICP fields don't regress to null.
     if (venueId && match.confidence !== "NONE") {
       const crm = await runCrmWriter({
         supabase,
         venueId,
         messageId,
         threadId,
-        triage,
+        triage: triageForDecisions,
         match,
       });
       if (!crm.ok) {
@@ -191,7 +224,7 @@ export async function processClaimedInbound(
           supabase,
           venueId,
           messageId,
-          triage,
+          triage: triageForDecisions,
         });
         if (!draft.ok) {
           console.error("[drafter] failed", {

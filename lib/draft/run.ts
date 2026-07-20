@@ -14,9 +14,12 @@ export type DraftOutput = z.infer<typeof draftOutputSchema>;
 const SYSTEM = `You draft threaded reply emails for VenueHopper venue outreach (Chicago private events).
 Return ONLY valid JSON: { "subject": string, "body": string }.
 Rules:
+- You are Kenneth writing TO the venue. Never write as the venue or address yourself.
 - Follow the playbook intent exactly. Do not invent prices, discounts, capacity, or terms.
+- Do NOT re-ask fully_private, capacity_ok, or min_spend when they appear under Known facts.
 - Address every key_details item in the draft OR list it under a leading line [ESCALATION: …].
 - If information is missing that you would need to invent, start the body with [ESCALATION: …].
+- Use the full Thread context (multiple turns). Respond to the latest venue message using prior constraints.
 - Plain text only. Sign as ${EVENT_BRIEF.signerName}.
 - Never claim you read PDF/DOC attachments.
 - Keep under ~250 words.`;
@@ -30,12 +33,13 @@ function buildUserPrompt(ctx: DraftContext, errorNote?: string): string {
     `Reply intent: ${ctx.intentResult.intent}`,
     `Missing ICP fields: ${ctx.intentResult.missing.join(", ") || "(none)"}`,
     `Date conflict: ${ctx.intentResult.dateConflict}`,
-    `Extracted JSON: ${JSON.stringify(ctx.triage.extracted)}`,
+    `Known facts (do not re-ask):\n${ctx.knownFacts}`,
+    `Extracted JSON (merged): ${JSON.stringify(ctx.triage.extracted)}`,
     `key_details:\n${keyDetails.length ? keyDetails.map((d) => `- ${d}`).join("\n") : "(none)"}`,
     `Event brief:\n${ctx.eventBriefText}`,
     `Playbook:\n${ctx.playbook}`,
     `Preferred subject (may adjust Re:): ${ctx.subject}`,
-    `Thread context:\n${ctx.recentThread}`,
+    `Thread context (oldest → newest):\n${ctx.recentThread}`,
   ]
     .filter(Boolean)
     .join("\n\n");

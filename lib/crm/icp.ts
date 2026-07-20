@@ -4,6 +4,13 @@ export type IcpExtracted = {
   capacity_ok?: boolean | null;
 };
 
+/** Full triage extract shape used for cross-message ICP memory. */
+export type ExtractedMemory = IcpExtracted & {
+  contact_name?: string | null;
+  proposed_dates?: string[];
+  key_details?: string[];
+};
+
 export type IcpField = "min_spend_usd" | "fully_private" | "capacity_ok";
 
 /** Hard ICP ceiling — above this is a commercial fail. */
@@ -84,4 +91,88 @@ export function analyzeIcp(extracted: IcpExtracted): IcpAnalysis {
     typeof extracted.min_spend_usd === "number" &&
     extracted.min_spend_usd > STATED_BUDGET_USD;
   return { verdict, missing, hardFail, negotiatePrice };
+}
+
+function isPresent<T>(v: T | null | undefined): v is T {
+  return v !== null && v !== undefined;
+}
+
+function mergeKeyDetails(prior: string[], current: string[]): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const d of [...prior, ...current]) {
+    const key = d.trim().toLowerCase();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(d.trim());
+  }
+  return out;
+}
+
+/**
+ * Merge prior thread extract with the latest message extract.
+ * Current non-null wins; explicit false / new numbers always win; null keeps prior.
+ */
+export function mergeIcpExtracted(
+  prior: ExtractedMemory,
+  current: ExtractedMemory,
+): ExtractedMemory {
+  const priorDates = prior.proposed_dates ?? [];
+  const currentDates = current.proposed_dates ?? [];
+  const priorDetails = prior.key_details ?? [];
+  const currentDetails = current.key_details ?? [];
+
+  return {
+    min_spend_usd: isPresent(current.min_spend_usd)
+      ? current.min_spend_usd
+      : (prior.min_spend_usd ?? null),
+    fully_private: isPresent(current.fully_private)
+      ? current.fully_private
+      : (prior.fully_private ?? null),
+    capacity_ok: isPresent(current.capacity_ok)
+      ? current.capacity_ok
+      : (prior.capacity_ok ?? null),
+    contact_name: isPresent(current.contact_name)
+      ? current.contact_name
+      : (prior.contact_name ?? null),
+    proposed_dates:
+      currentDates.length > 0 ? [...currentDates] : [...priorDates],
+    key_details: mergeKeyDetails(priorDetails, currentDetails),
+  };
+}
+
+/** Fold chronologically ordered extracts (oldest → newest). */
+export function foldExtractions(
+  extracts: ExtractedMemory[],
+): ExtractedMemory {
+  return extracts.reduce<ExtractedMemory>(
+    (acc, next) => mergeIcpExtracted(acc, next),
+    {},
+  );
+}
+
+/** Human-readable known ICP facts for draft prompts (do not re-ask). */
+export function formatKnownFacts(extracted: ExtractedMemory): string {
+  const lines: string[] = [];
+  if (isPresent(extracted.fully_private)) {
+    lines.push(`fully_private: ${extracted.fully_private}`);
+  }
+  if (isPresent(extracted.capacity_ok)) {
+    lines.push(`capacity_ok: ${extracted.capacity_ok}`);
+  }
+  if (isPresent(extracted.min_spend_usd)) {
+    lines.push(`min_spend_usd: ${extracted.min_spend_usd}`);
+  }
+  if (isPresent(extracted.contact_name) && extracted.contact_name.trim()) {
+    lines.push(`contact_name: ${extracted.contact_name}`);
+  }
+  const dates = extracted.proposed_dates ?? [];
+  if (dates.length) {
+    lines.push(`proposed_dates: ${dates.join("; ")}`);
+  }
+  const details = extracted.key_details ?? [];
+  if (details.length) {
+    lines.push(`key_details: ${details.join(" | ")}`);
+  }
+  return lines.length ? lines.join("\n") : "(none yet)";
 }
