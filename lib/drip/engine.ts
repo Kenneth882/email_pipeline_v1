@@ -174,22 +174,89 @@ function spacingMs(remainingSends: number, deadlineMs: number): number {
   return Math.max(5_000, Math.min(ideal, fit, 120_000));
 }
 
+function slotSentAtColumn(
+  slot: EmailSlot,
+): "email_1_sent_at" | "email_2_sent_at" | "email_3_sent_at" {
+  if (slot === 1) return "email_1_sent_at";
+  if (slot === 2) return "email_2_sent_at";
+  return "email_3_sent_at";
+}
+
+/**
+ * Atomically claim a send slot before Unipile. Concurrent drip runs lose the race
+ * (0 rows updated) and must skip — prevents double-sends on overlapping invocations.
+ */
+async function claimEmailSlot(
+  supabase: SupabaseClient,
+  venueId: string,
+  slot: EmailSlot,
+): Promise<{ claimed: boolean; claimedAt: string }> {
+  const col = slotSentAtColumn(slot);
+  const claimedAt = new Date().toISOString();
+  const { data, error } = await supabase
+    .from("venues")
+    .update({ [col]: claimedAt, updated_at: claimedAt })
+    .eq("id", venueId)
+    .is(col, null)
+    .select("id")
+    .maybeSingle();
+  if (error) throw new Error(`claim slot ${slot}: ${error.message}`);
+  return { claimed: !!data, claimedAt };
+}
+
+/** Release a claim only when Unipile never accepted the send (retryable failure). */
+async function releaseEmailSlot(
+  supabase: SupabaseClient,
+  venueId: string,
+  slot: EmailSlot,
+  claimedAt: string,
+): Promise<void> {
+  const col = slotSentAtColumn(slot);
+  const { error } = await supabase
+    .from("venues")
+    .update({ [col]: null, updated_at: new Date().toISOString() })
+    .eq("id", venueId)
+    .eq(col, claimedAt);
+  if (error) {
+    console.error("[drip] failed to release claim", {
+      venueId,
+      slot,
+      error: error.message,
+    });
+  }
+}
+
 async function stillSuppressed(
   supabase: SupabaseClient,
   venueId: string,
+  slot: EmailSlot,
 ): Promise<{ suppress: boolean; reason?: string }> {
   const paused = await getConfigValue(supabase, "paused");
   if (isPaused(paused)) return { suppress: true, reason: "paused" };
 
   const { data, error } = await supabase
     .from("venues")
-    .select("last_inbound_at, bounced, email_1_sent_at, email_2_sent_at, email_3_sent_at, stage_cache")
+    .select(
+      "last_inbound_at, bounced, email_1_sent_at, email_2_sent_at, email_3_sent_at, stage_cache",
+    )
     .eq("id", venueId)
     .maybeSingle();
 
   if (error || !data) return { suppress: true, reason: "venue_missing" };
   if (data.bounced) return { suppress: true, reason: "bounced" };
   if (data.last_inbound_at) return { suppress: true, reason: "has_inbound" };
+
+  const col = slotSentAtColumn(slot);
+  if (data[col]) return { suppress: true, reason: "already_sent" };
+
+  // Follow-ups must still be in contacted with prior slots present.
+  if (slot === 2 && !data.email_1_sent_at) {
+    return { suppress: true, reason: "missing_email_1" };
+  }
+  if (slot === 3 && (!data.email_1_sent_at || !data.email_2_sent_at)) {
+    return { suppress: true, reason: "missing_prior_slot" };
+  }
+
   return { suppress: false };
 }
 
@@ -280,7 +347,7 @@ export async function runDrip(
   for (let i = 0; i < candidates.length; i++) {
     const c = candidates[i];
 
-    const gate = await stillSuppressed(supabase, c.venueId);
+    const gate = await stillSuppressed(supabase, c.venueId, c.slot);
     if (gate.suppress) {
       result.skipped.push({
         venueId: c.venueId,
@@ -289,12 +356,22 @@ export async function runDrip(
       continue;
     }
 
-    const { subject, body } = buildOutreachEmail({
-      venueName: c.name,
-      slot: c.slot,
-    });
+    let claimedAt: string | null = null;
+    let unipileAccepted = false;
 
     try {
+      const claim = await claimEmailSlot(supabase, c.venueId, c.slot);
+      if (!claim.claimed) {
+        result.skipped.push({ venueId: c.venueId, reason: "already_claimed" });
+        continue;
+      }
+      claimedAt = claim.claimedAt;
+
+      const { subject, body } = buildOutreachEmail({
+        venueName: c.name,
+        slot: c.slot,
+      });
+
       const sent = await sendUnipileEmail({
         toEmail: c.email,
         toName: c.name,
@@ -302,6 +379,7 @@ export async function runDrip(
         body,
         replyToMessageId: c.replyToMessageId ?? undefined,
       });
+      unipileAccepted = true;
 
       const { error: outErr } = await supabase.from("outbound_messages").insert({
         venue_id: c.venueId,
@@ -312,14 +390,11 @@ export async function runDrip(
       });
       if (outErr) throw new Error(outErr.message);
 
-      const sentAt = new Date().toISOString();
+      // Slot timestamp already set by claim; finish thread / stage bookkeeping.
       const venueUpdate: Record<string, unknown> = {
         thread_id: sent.threadId,
-        updated_at: sentAt,
+        updated_at: new Date().toISOString(),
       };
-      if (c.slot === 1) venueUpdate.email_1_sent_at = sentAt;
-      if (c.slot === 2) venueUpdate.email_2_sent_at = sentAt;
-      if (c.slot === 3) venueUpdate.email_3_sent_at = sentAt;
 
       if (c.slot === 1 && c.hubspotDealId) {
         const stage = await advanceToContacted({
@@ -369,12 +444,21 @@ export async function runDrip(
       await recordBounceStats(supabase, 1);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
+      // Only release if Unipile never accepted — otherwise keep claim to avoid a
+      // second real send on retry after a post-send bookkeeping failure.
+      if (claimedAt && !unipileAccepted) {
+        await releaseEmailSlot(supabase, c.venueId, c.slot, claimedAt);
+      }
       result.errors.push({ venueId: c.venueId, error: msg });
       await supabase.from("pipeline_events").insert({
         venue_id: c.venueId,
         actor: "drip",
         event: "error",
-        detail: { slot: c.slot, error: msg },
+        detail: {
+          slot: c.slot,
+          error: msg,
+          claim_released: Boolean(claimedAt && !unipileAccepted),
+        },
       });
     }
 
