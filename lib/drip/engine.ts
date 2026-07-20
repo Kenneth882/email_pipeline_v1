@@ -70,13 +70,13 @@ function primaryEmail(v: VenueRow): string | null {
 async function loadCandidates(
   supabase: SupabaseClient,
 ): Promise<DripCandidate[]> {
+  // All email-eligible venues with HubSpot IDs (seeds + real). Warm-up quota still caps volume.
   const { data, error } = await supabase
     .from("venues")
     .select(
       "id, name, hubspot_deal_id, stage_cache, thread_id, email_1_sent_at, email_2_sent_at, email_3_sent_at, last_inbound_at, bounced, venue_contacts(email, is_primary)",
     )
     .eq("contact_method", "email")
-    .eq("is_seed", true)
     .eq("bounced", false)
     .not("hubspot_contact_id", "is", null)
     .not("hubspot_deal_id", "is", null);

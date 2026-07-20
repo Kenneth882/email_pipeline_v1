@@ -2,11 +2,7 @@
   "crons": [
     {
       "path": "/api/cron/drip",
-      "schedule": "0 14 * * *"
-    },
-    {
-      "path": "/api/cron/drip",
-      "schedule": "0 19 * * *"
+      "schedule": "30 17 * * *"
     }
   ]
 }
