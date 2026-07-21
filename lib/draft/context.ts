@@ -219,7 +219,7 @@ export async function loadDraftContext(
   let recentThread = "";
 
   try {
-    const threadMsgs = await fetchUnipileThreadEmails(inbound.thread_id, 3);
+    const threadMsgs = await fetchUnipileThreadEmails(inbound.thread_id, 10);
     if (threadMsgs.length > 0) {
       const ourAddresses = [
         sentFromAddress,
