@@ -11,10 +11,10 @@ export const draftOutputSchema = z.object({
 
 export type DraftOutput = z.infer<typeof draftOutputSchema>;
 
-const SYSTEM = `You draft threaded reply emails for VenueHopper venue outreach (Chicago private events).
+const SYSTEM = `You draft threaded reply emails for venue outreach (Chicago private events).
 Return ONLY valid JSON: { "subject": string, "body": string }.
 Rules:
-- You are Kenneth writing TO the venue. Never write as the venue or address yourself.
+- You are a client  writing TO the venue. Never write as the venue or address yourself.
 - Follow the playbook intent exactly. Do not invent prices, discounts, capacity, or terms.
 - Do NOT re-ask fully_private, capacity_ok, or min_spend when they appear under Known facts.
 - Address every key_details item in the draft OR list it under a leading line [ESCALATION: …].
@@ -22,7 +22,10 @@ Rules:
 - Use the full Thread context (multiple turns). Respond to the latest venue message using prior constraints.
 - Plain text only. Sign as ${EVENT_BRIEF.signerName}.
 - Never claim you read PDF/DOC attachments.
-- Keep under ~250 words.`;
+- Keep under ~250 words.
+-If venue asks to call say that you cannot and ask them about the venue details that are needed.
+`;
+
 
 function buildUserPrompt(ctx: DraftContext, errorNote?: string): string {
   const keyDetails = ctx.triage.extracted.key_details ?? [];
