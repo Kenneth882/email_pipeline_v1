@@ -6,7 +6,9 @@ import { runCrmWriter } from "@/lib/crm/writer";
 import { runDraftingAgent } from "@/lib/draft/agent";
 import { resolveReplyIntent } from "@/lib/draft/intent";
 import { stripQuotedHistory } from "@/lib/email/strip-quotes";
+import { extractPdfAttachments } from "@/lib/triage/pdf";
 import { runTriage } from "@/lib/triage/run";
+import type { TriageAttachment } from "@/lib/triage/schema";
 import type { UnipileEmailWebhook } from "@/lib/unipile/inbound-payload";
 import {
   extractReplyMessageIdHeaders,
@@ -17,10 +19,18 @@ function asString(v: unknown): string {
   return typeof v === "string" ? v : "";
 }
 
+function asOptionalNumber(v: unknown): number | undefined {
+  if (typeof v === "number" && Number.isFinite(v)) return v;
+  if (typeof v === "string" && v.trim() && Number.isFinite(Number(v))) {
+    return Number(v);
+  }
+  return undefined;
+}
+
 function attachmentsFrom(
   payload: UnipileEmailWebhook,
   full: Record<string, unknown> | null,
-): Array<{ filename: string; mimeType: string }> {
+): TriageAttachment[] {
   const raw =
     (full?.attachments as unknown[]) ??
     ((payload as { attachments?: unknown[] }).attachments as unknown[]) ??
@@ -29,11 +39,15 @@ function attachmentsFrom(
   return raw
     .map((a) => {
       const obj = a as Record<string, unknown>;
+      const id = asString(obj.id || obj.attachment_id || obj.att_id);
+      const size = asOptionalNumber(obj.size ?? obj.size_bytes ?? obj.bytes);
       return {
+        id: id || undefined,
         filename: asString(obj.filename || obj.name || "attachment"),
         mimeType: asString(
           obj.mime || obj.mime_type || obj.content_type || "application/octet-stream",
         ),
+        size,
       };
     })
     .filter((a) => a.filename);
@@ -78,6 +92,7 @@ export async function processClaimedInbound(
       null;
 
     const attachments = attachmentsFrom(payload, full);
+    const pdf = await extractPdfAttachments(messageId, attachments);
     const inReplyToHeaders = extractReplyMessageIdHeaders(full);
 
     const triage = await runTriage({
@@ -85,6 +100,8 @@ export async function processClaimedInbound(
       subject,
       bodyPlain,
       attachments,
+      attachmentTexts: pdf.texts,
+      attachmentPending: pdf.pending,
     });
 
     const match = await matchInboundToVenue(supabase, {
@@ -187,6 +204,8 @@ export async function processClaimedInbound(
         spend_estimate: intentResult.spendEstimate,
         match,
         merged_icp: mergedExtracted,
+        attachment_pending: pdf.pending,
+        unread_pdfs: pdf.unread,
       },
     });
 

@@ -83,6 +83,16 @@ export function buildReviewReason(
   if (triage.classification === "bounce") return "bounce";
   if (triage.classification === "out_of_scope") return "out_of_scope";
   if (triage.confidence < 0.7) return "low_confidence";
+  // Load-bearing unread PDF (firewall escalated); not a mere attachment_pending tag.
+  if (
+    triage.needs_human_review &&
+    !triage.reply_required &&
+    (triage.classification === "pricing_info" ||
+      triage.classification === "proposal") &&
+    (triage.extracted.key_details ?? []).includes("attachment_pending")
+  ) {
+    return "attachment_unread_needed";
+  }
   if (triage.needs_human_review) return "needs_human_review";
   return "";
 }

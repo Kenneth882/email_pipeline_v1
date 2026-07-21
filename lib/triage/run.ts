@@ -49,7 +49,9 @@ Rules:
 - fully_private: true/false only when stated; null if unmentioned.
 - min_spend_usd: number only when a clear minimum/price is stated; null if unmentioned. Never invent spend.
 - Be conservative on confidence.
-- Do not invent numbers. Use null when unknown.`;
+- Do not invent numbers. Use null when unknown.
+- Treat attachment_text blocks as part of the venue message for extraction (fees, capacity, terms).
+- Never invent beyond body + attachment_text. If attachment_pending is noted, still extract everything usable from the body; include "attachment_pending" in key_details.`;
 
 function buildUserPrompt(input: TriageInput, errorNote?: string): string {
   const atts =
@@ -59,11 +61,25 @@ function buildUserPrompt(input: TriageInput, errorNote?: string): string {
           .map((a) => `${a.filename} (${a.mimeType})`)
           .join(", ");
 
+  const attachmentBlocks =
+    input.attachmentTexts && input.attachmentTexts.length > 0
+      ? input.attachmentTexts
+          .map(
+            (t) =>
+              `attachment_text (${t.filename}):\n${t.text}`,
+          )
+          .join("\n\n")
+      : null;
+
   return [
     errorNote ? `Previous JSON failed validation: ${errorNote}\nFix and retry.` : null,
     `thread_id: ${input.threadId}`,
     `subject: ${input.subject}`,
     `attachments: ${atts}`,
+    input.attachmentPending
+      ? "attachment_pending: true (one or more PDFs could not be read — extract from body; include attachment_pending in key_details)"
+      : null,
+    attachmentBlocks,
     `body:`,
     input.bodyPlain.slice(0, 2500),
   ]

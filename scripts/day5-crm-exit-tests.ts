@@ -227,6 +227,59 @@ function firewallStillBlocks() {
   assert(contract.needs_human_review === true, "contract must review");
 }
 
+function softUnreadPdfCases() {
+  // Unread + see attached + empty extract → escalate + review reason
+  const loadBearing = applyTriageFirewall(
+    baseTriage({
+      classification: "proposal",
+      extracted: { proposed_dates: [], key_details: [] },
+      needs_human_review: false,
+      reply_required: true,
+    }),
+    {
+      threadId: "t1",
+      subject: "Proposal",
+      bodyPlain: "Please see the attached proposal for full pricing.",
+      attachments: [
+        { filename: "proposal.pdf", mimeType: "application/pdf" },
+      ],
+      attachmentPending: true,
+    },
+  );
+  assert(loadBearing.needs_human_review === true, "load-bearing unread review");
+  assert(loadBearing.reply_required === false, "load-bearing unread no draft");
+  assert(
+    buildReviewReason(loadBearing) === "attachment_unread_needed",
+    "attachment_unread_needed reason",
+  );
+
+  // Unread but body already priced → draft ok, no review reason
+  const bodyOk = applyTriageFirewall(
+    baseTriage({
+      extracted: {
+        min_spend_usd: 2000,
+        fully_private: true,
+        capacity_ok: true,
+        proposed_dates: [],
+        key_details: [],
+      },
+    }),
+    {
+      threadId: "t1",
+      subject: "Pricing",
+      bodyPlain: "Min spend is $2000 for a private buyout. PDF attached.",
+      attachments: [{ filename: "menu.pdf", mimeType: "application/pdf" }],
+      attachmentPending: true,
+    },
+  );
+  assert(bodyOk.reply_required === true, "body-ok unread still drafts");
+  assert(
+    (bodyOk.extracted.key_details ?? []).includes("attachment_pending"),
+    "still tags attachment_pending",
+  );
+  assert(buildReviewReason(bodyOk) === "", "no review reason when draftable");
+}
+
 function main() {
   console.log("1) ICP verdict…");
   icpCases();
@@ -246,6 +299,10 @@ function main() {
 
   console.log("5) Firewall still blocks contracts…");
   firewallStillBlocks();
+  console.log("  ok");
+
+  console.log("6) Soft unread PDF firewall…");
+  softUnreadPdfCases();
   console.log("  ok");
 
   console.log("\nAll Day 5 CRM automated checks passed.");

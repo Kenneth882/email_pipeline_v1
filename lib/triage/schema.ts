@@ -61,9 +61,28 @@ export const triageResultSchema = z.object({
 export type TriageResult = z.infer<typeof triageResultSchema>;
 export type TriageExtracted = z.infer<typeof triageExtractedSchema>;
 
+export type TriageAttachment = {
+  id?: string;
+  filename: string;
+  mimeType: string;
+  size?: number;
+};
+
+export type TriageAttachmentText = {
+  filename: string;
+  text: string;
+};
+
 export type TriageInput = {
   threadId: string;
   subject: string;
   bodyPlain: string;
-  attachments: Array<{ filename: string; mimeType: string }>;
+  attachments: TriageAttachment[];
+  /** Capped plain text extracted from PDF attachments (triage only). */
+  attachmentTexts?: TriageAttachmentText[];
+  /** True when at least one PDF could not be downloaded/extracted. */
+  attachmentPending?: boolean;
 };
+
+/** key_details token when a PDF was present but unread. */
+export const ATTACHMENT_PENDING_DETAIL = "attachment_pending";

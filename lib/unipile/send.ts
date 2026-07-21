@@ -142,6 +142,81 @@ export async function fetchUnipileEmail(
   return json;
 }
 
+/**
+ * Download a single attachment: GET /api/v1/emails/{email_id}/attachments/{attachment_id}
+ * Returns raw bytes (binary body, or base64 JSON string when Unipile wraps content).
+ */
+export async function downloadUnipileAttachment(
+  emailId: string,
+  attachmentId: string,
+): Promise<Buffer> {
+  const apiKey = process.env.UNIPILE_API;
+  const accountId = process.env.UNIPILE_ACCOUNT_ID;
+  if (!apiKey) throw new Error("Missing UNIPILE_API");
+  if (!emailId.trim() || !attachmentId.trim()) {
+    throw new Error("Missing email_id or attachment_id");
+  }
+
+  const url = new URL(
+    `${unipileBaseUrl()}/api/v1/emails/${encodeURIComponent(emailId)}/attachments/${encodeURIComponent(attachmentId)}`,
+  );
+  if (accountId) url.searchParams.set("account_id", accountId);
+
+  const res = await fetch(url.toString(), {
+    headers: {
+      "X-API-KEY": apiKey,
+      Accept: "*/*",
+    },
+  });
+
+  if (!res.ok) {
+    const errText = await res.text().catch(() => "");
+    throw new Error(
+      `Unipile get attachment ${res.status}: ${errText.slice(0, 500)}`,
+    );
+  }
+
+  const contentType = (res.headers.get("content-type") || "").toLowerCase();
+  if (contentType.includes("application/json")) {
+    const text = await res.text();
+    let json: unknown;
+    try {
+      json = JSON.parse(text);
+    } catch {
+      return Buffer.from(text);
+    }
+    if (typeof json === "string") {
+      const b64 = json.replace(/^data:[^;]+;base64,/, "");
+      try {
+        return Buffer.from(b64, "base64");
+      } catch {
+        return Buffer.from(json);
+      }
+    }
+    if (json && typeof json === "object") {
+      const obj = json as Record<string, unknown>;
+      const data =
+        obj.data ?? obj.content ?? obj.body ?? obj.attachment ?? obj.file;
+      if (typeof data === "string") {
+        const b64 = data.replace(/^data:[^;]+;base64,/, "");
+        try {
+          return Buffer.from(b64, "base64");
+        } catch {
+          return Buffer.from(data);
+        }
+      }
+      if (data && typeof data === "object" && ArrayBuffer.isView(data)) {
+        const view = data as ArrayBufferView;
+        return Buffer.from(view.buffer, view.byteOffset, view.byteLength);
+      }
+    }
+    return Buffer.from(text);
+  }
+
+  const ab = await res.arrayBuffer();
+  return Buffer.from(ab);
+}
+
 /** Normalize Unipile list-emails payloads to an array of email objects. */
 export function normalizeUnipileEmailList(json: unknown): Record<string, unknown>[] {
   if (Array.isArray(json)) {

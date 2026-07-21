@@ -6,10 +6,17 @@
 import { createClient } from "@supabase/supabase-js";
 import { stripQuotedHistory } from "../lib/email/strip-quotes";
 import { applyTriageFirewall } from "../lib/triage/firewall";
+import {
+  extractPdfAttachments,
+  isPdfAttachment,
+  MAX_PDF_BYTES,
+} from "../lib/triage/pdf";
 import type { TriageResult } from "../lib/triage/schema";
+import { ATTACHMENT_PENDING_DETAIL } from "../lib/triage/schema";
 import { dailyQuotaForWarmupDay, halfQuota } from "../lib/config";
 import { runDrip } from "../lib/drip/engine";
 import { setConfigValue } from "../lib/config";
+import { buildReviewReason } from "../lib/crm/writer";
 
 function assert(cond: unknown, msg: string): asserts cond {
   if (!cond) throw new Error(msg);
@@ -58,6 +65,220 @@ function firewallCase() {
     },
   );
   assert(auto.reply_required === false, "auto_reply no draft");
+
+  // Readable PDF (pending false): do not escalate on PDF presence alone
+  const readablePdf = applyTriageFirewall(
+    {
+      ...base,
+      classification: "proposal",
+      extracted: {
+        proposed_dates: [],
+        key_details: ["F&B min $2000"],
+        min_spend_usd: 2000,
+      },
+    },
+    {
+      threadId: "t1",
+      subject: "Proposal",
+      bodyPlain: "See our rates below.",
+      attachments: [
+        { id: "a1", filename: "menu.pdf", mimeType: "application/pdf" },
+      ],
+      attachmentTexts: [
+        { filename: "menu.pdf", text: "Food and beverage minimum $2000" },
+      ],
+      attachmentPending: false,
+    },
+  );
+  assert(readablePdf.reply_required === true, "readable PDF proposal may draft");
+  assert(
+    readablePdf.needs_human_review === false,
+    "readable PDF does not force review",
+  );
+
+  // Unread PDF + body has commercial facts → tag pending, still draft
+  const unreadBodyOk = applyTriageFirewall(
+    {
+      ...base,
+      extracted: {
+        proposed_dates: [],
+        key_details: [],
+        min_spend_usd: 2500,
+        fully_private: true,
+      },
+    },
+    {
+      threadId: "t1",
+      subject: "Pricing",
+      bodyPlain: "Our private room min is $2500. Menu PDF attached for reference.",
+      attachments: [
+        { id: "a1", filename: "menu.pdf", mimeType: "application/pdf" },
+      ],
+      attachmentPending: true,
+    },
+  );
+  assert(
+    unreadBodyOk.extracted.key_details.includes(ATTACHMENT_PENDING_DETAIL),
+    "unread tags attachment_pending",
+  );
+  assert(unreadBodyOk.reply_required === true, "body-sufficient unread PDF drafts");
+  assert(
+    unreadBodyOk.needs_human_review === false,
+    "body-sufficient unread PDF no forced review",
+  );
+  assert(
+    buildReviewReason(unreadBodyOk) === "",
+    "no HubSpot review reason when still draftable",
+  );
+
+  // Unread PDF + see attached + no body facts → escalate
+  const unreadLoadBearing = applyTriageFirewall(
+    {
+      ...base,
+      classification: "proposal",
+      extracted: { proposed_dates: [], key_details: [] },
+    },
+    {
+      threadId: "t1",
+      subject: "Proposal",
+      bodyPlain: "Please see the attached menu for pricing and packages.",
+      attachments: [
+        { filename: "menu.pdf", mimeType: "application/pdf" },
+      ],
+      attachmentPending: true,
+    },
+  );
+  assert(
+    unreadLoadBearing.needs_human_review === true,
+    "load-bearing unread PDF needs review",
+  );
+  assert(
+    unreadLoadBearing.reply_required === false,
+    "load-bearing unread PDF no draft",
+  );
+  assert(
+    unreadLoadBearing.extracted.key_details.includes(ATTACHMENT_PENDING_DETAIL),
+    "load-bearing has attachment_pending",
+  );
+  assert(
+    buildReviewReason(unreadLoadBearing) === "attachment_unread_needed",
+    "review reason attachment_unread_needed",
+  );
+
+  // Contract with PDF still blocks
+  const contractPdf = applyTriageFirewall(
+    { ...base, classification: "contract" },
+    {
+      threadId: "t1",
+      subject: "Contract",
+      bodyPlain: "Please execute the attached agreement.",
+      attachments: [
+        { filename: "contract.pdf", mimeType: "application/pdf" },
+      ],
+      attachmentPending: true,
+    },
+  );
+  assert(contractPdf.reply_required === false, "contract PDF no draft");
+  assert(contractPdf.needs_human_review === true, "contract PDF review");
+  assert(
+    buildReviewReason(contractPdf) === "contract_firewall",
+    "contract reason wins over attachment",
+  );
+}
+
+async function pdfExtractCase() {
+  assert(
+    isPdfAttachment({ filename: "x.pdf", mimeType: "application/octet-stream" }),
+    "pdf by extension",
+  );
+  assert(
+    isPdfAttachment({ filename: "x", mimeType: "application/pdf" }),
+    "pdf by mime",
+  );
+  assert(
+    !isPdfAttachment({ filename: "x.docx", mimeType: "application/msword" }),
+    "docx not pdf",
+  );
+
+  const none = await extractPdfAttachments("email-1", []);
+  assert(!none.pending && none.texts.length === 0, "no pdfs → not pending");
+
+  const noId = await extractPdfAttachments("email-1", [
+    { filename: "menu.pdf", mimeType: "application/pdf" },
+  ]);
+  assert(noId.pending && noId.unread.includes("menu.pdf"), "missing id → unread");
+
+  const oversized = await extractPdfAttachments("email-1", [
+    {
+      id: "att-1",
+      filename: "huge.pdf",
+      mimeType: "application/pdf",
+      size: MAX_PDF_BYTES + 1,
+    },
+  ]);
+  assert(
+    oversized.pending && oversized.unread.includes("huge.pdf"),
+    "oversize → unread",
+  );
+
+  const failedDl = await extractPdfAttachments(
+    "email-1",
+    [{ id: "att-1", filename: "menu.pdf", mimeType: "application/pdf" }],
+    {
+      download: async () => {
+        throw new Error("network");
+      },
+    },
+  );
+  assert(
+    failedDl.pending && failedDl.unread.includes("menu.pdf"),
+    "download fail → unread",
+  );
+
+  const emptyText = await extractPdfAttachments(
+    "email-1",
+    [{ id: "att-1", filename: "scan.pdf", mimeType: "application/pdf" }],
+    {
+      download: async () => Buffer.from("%PDF-1.4 empty-ish"),
+    },
+  );
+  assert(
+    emptyText.pending && emptyText.unread.includes("scan.pdf"),
+    "bad/empty PDF → unread",
+  );
+
+  const tinyPdf = `%PDF-1.4
+1 0 obj<< /Type /Catalog /Pages 2 0 R >>endobj
+2 0 obj<< /Type /Pages /Kids [3 0 R] /Count 1 >>endobj
+3 0 obj<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 144] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>endobj
+4 0 obj<< /Length 55 >>stream
+BT /F1 12 Tf 50 100 Td (F and B minimum 2000) Tj ET
+endstream
+endobj
+5 0 obj<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>endobj
+xref
+0 6
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000115 00000 n 
+0000000266 00000 n 
+0000000371 00000 n 
+trailer<< /Size 6 /Root 1 0 R >>
+startxref
+448
+%%EOF`;
+
+  const ok = await extractPdfAttachments(
+    "email-1",
+    [{ id: "att-1", filename: "menu.pdf", mimeType: "application/pdf" }],
+    { download: async () => Buffer.from(tinyPdf) },
+  );
+  assert(!ok.pending && ok.texts.length === 1, "valid PDF extracts");
+  assert(
+    ok.texts[0]?.text.includes("2000"),
+    "extracted text includes fee number",
+  );
 }
 
 function quoteStripCase() {
@@ -74,6 +295,10 @@ function quoteStripCase() {
 }
 
 async function main() {
+  console.log("0) PDF extract helpers…");
+  await pdfExtractCase();
+  console.log("  ok");
+
   console.log("1) Quota math…");
   assert(dailyQuotaForWarmupDay(1) === 15, "day1 quota");
   assert(dailyQuotaForWarmupDay(5) === 30, "day5 quota");
