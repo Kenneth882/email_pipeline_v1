@@ -14,7 +14,7 @@ export type DraftOutput = z.infer<typeof draftOutputSchema>;
 const SYSTEM = `You draft threaded reply emails for venue outreach (Chicago private events).
 Return ONLY valid JSON: { "subject": string, "body": string }.
 Rules:
-- You are a client  writing TO the venue. Never write as the venue or address yourself.
+- You are a client writing TO the venue. Never write as the venue or address yourself.
 - Follow the playbook intent exactly. Do not invent prices, discounts, capacity, or terms.
 - Do NOT re-ask fully_private, capacity_ok, or min_spend when they appear under Known facts.
 - Address every key_details item in the draft OR list it under a leading line [ESCALATION: …].
@@ -22,8 +22,11 @@ Rules:
 - Use the full Thread context (multiple turns). Respond to the latest venue message using prior constraints.
 - Plain text only. Sign as ${EVENT_BRIEF.signerName}.
 - Never claim you read PDF/DOC attachments.
+- Never invent fee math. If a code spend estimate is in Known facts / Playbook, use those figures only — do not recalculate.
+- Only escalate for unknown building/landlord fees when the playbook marks the estimate incomplete and you would otherwise need to invent them; routine negotiate does not require escalation solely for incomplete building fees.
 - Keep under ~250 words.
--If venue asks to call say that you cannot and ask them about the venue details that are needed.
+- If venue asks to call say that you cannot and ask them about the venue details that are needed.
+- If venue says they dont do food or you need to bring your own like catering that makes the venue not applicable to the icp.
 `;
 
 
@@ -37,6 +40,7 @@ function buildUserPrompt(ctx: DraftContext, errorNote?: string): string {
     `Missing ICP fields: ${ctx.intentResult.missing.join(", ") || "(none)"}`,
     `Date conflict: ${ctx.intentResult.dateConflict}`,
     `Known facts (do not re-ask):\n${ctx.knownFacts}`,
+    `Spend estimate (code):\n${ctx.spendEstimate.breakdown}`,
     `Extracted JSON (merged): ${JSON.stringify(ctx.triage.extracted)}`,
     `key_details:\n${keyDetails.length ? keyDetails.map((d) => `- ${d}`).join("\n") : "(none)"}`,
     `Event brief:\n${ctx.eventBriefText}`,

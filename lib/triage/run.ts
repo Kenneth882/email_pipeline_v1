@@ -17,7 +17,18 @@ Return ONLY valid JSON matching this shape:
     "capacity_ok": boolean|null,
     "contact_name": string|null,
     "proposed_dates": string[],
-    "key_details": string[]
+    "key_details": string[],
+    "fees": {
+      "fb_minimum_usd": number|null,
+      "after_hours_usd_per_hour": number|null,
+      "venue_close_hour_local": number|null,
+      "staff": [{"role": string, "count": number, "rate_usd_per_hour": number, "min_hours": number}]|null,
+      "sales_tax_pct": number|null,
+      "processing_fee_pct": number|null,
+      "gratuity_pct": number|null,
+      "gratuity_mandatory": boolean|null,
+      "building_fees_unknown": boolean|null
+    }|null
   },
   "confidence": number,
   "needs_human_review": boolean,
@@ -25,6 +36,13 @@ Return ONLY valid JSON matching this shape:
 }
 Rules:
 - Put every commercial/logistical fact into key_details (fees, minimums, blackouts, deposits, capacity caveats).
+- Also extract structured fee line items into fees when stated. Never invent fee numbers — use null / omit.
+- min_spend_usd AND fees.fb_minimum_usd: set both from a clear F&B / food & beverage / buyout minimum when stated.
+- venue_close_hour_local: 24h local hour (e.g. 19 if they operate until 7pm). null if unstated.
+- staff: one row per required role (bartender, attendant, etc.) with count, hourly rate, and min hours when stated.
+- gratuity_mandatory: true only if tip/gratuity is required; false if optional/appreciated; null if unmentioned.
+- building_fees_unknown: true when they mention building/landlord fees that vary or need follow-up.
+- fees: null when the email has no fee line items beyond a simple min spend (still set min_spend_usd).
 - Contracts / legal / signature requests → classification "contract", needs_human_review true, reply_required false.
 - Auto-replies / OOO → auto_reply, reply_required false.
 - capacity_ok: true only if they can host ~70–80 standing; false if they explicitly cannot; null if capacity is unmentioned.

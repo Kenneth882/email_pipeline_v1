@@ -3,6 +3,10 @@ import {
   STATED_BUDGET_USD,
   type IcpField,
 } from "@/lib/crm/icp";
+import {
+  estimateAllInSpend,
+  type SpendEstimate,
+} from "@/lib/crm/pricing";
 import { EVENT_BRIEF } from "@/lib/event-brief";
 import type { TriageResult } from "@/lib/triage/schema";
 
@@ -17,6 +21,8 @@ export type ReplyIntentResult = {
   missing: IcpField[];
   dateConflict: boolean;
   draftable: boolean;
+  spendEstimate: SpendEstimate;
+  effectiveSpendUsd: number | null;
 };
 
 const DATE_CONFLICT_RE =
@@ -46,11 +52,26 @@ export function detectDateConflict(extracted: {
 
 /**
  * Deterministic reply intent from triage output.
+ * When all-in is computable, effective spend (not just F&B min) gates bands.
  * close_lost is never draftable.
  */
 export function resolveReplyIntent(triage: TriageResult): ReplyIntentResult {
-  const analysis = analyzeIcp(triage.extracted);
+  const spendEstimate = estimateAllInSpend(triage.extracted);
+  const effectiveSpendUsd = spendEstimate.usedForGating
+    ? spendEstimate.estimated_all_in_usd
+    : typeof triage.extracted.min_spend_usd === "number"
+      ? triage.extracted.min_spend_usd
+      : null;
+
+  const analysis = analyzeIcp(triage.extracted, { effectiveSpendUsd });
   const dateConflict = detectDateConflict(triage.extracted);
+
+  const base = {
+    missing: analysis.missing,
+    dateConflict,
+    spendEstimate,
+    effectiveSpendUsd: analysis.effectiveSpendUsd,
+  };
 
   if (
     triage.classification === "auto_reply" ||
@@ -61,52 +82,44 @@ export function resolveReplyIntent(triage: TriageResult): ReplyIntentResult {
     triage.confidence < 0.7
   ) {
     return {
+      ...base,
       intent: null,
-      missing: analysis.missing,
-      dateConflict,
       draftable: false,
     };
   }
 
-  if (
-    triage.classification === "rejection" ||
-    analysis.hardFail
-  ) {
+  if (triage.classification === "rejection" || analysis.hardFail) {
     return {
+      ...base,
       intent: "close_lost",
-      missing: analysis.missing,
-      dateConflict,
       draftable: false,
     };
   }
 
   if (analysis.missing.length > 0) {
     return {
+      ...base,
       intent: "ask_missing",
-      missing: analysis.missing,
-      dateConflict,
       draftable: true,
     };
   }
 
   if (analysis.verdict && (analysis.negotiatePrice || dateConflict)) {
     return {
+      ...base,
       intent: "negotiate",
-      missing: [],
-      dateConflict,
       draftable: true,
     };
   }
 
   if (
     analysis.verdict &&
-    typeof triage.extracted.min_spend_usd === "number" &&
-    triage.extracted.min_spend_usd <= STATED_BUDGET_USD
+    typeof analysis.effectiveSpendUsd === "number" &&
+    analysis.effectiveSpendUsd <= STATED_BUDGET_USD
   ) {
     return {
+      ...base,
       intent: "confirm_fit",
-      missing: [],
-      dateConflict,
       draftable: true,
     };
   }
@@ -115,17 +128,15 @@ export function resolveReplyIntent(triage: TriageResult): ReplyIntentResult {
   // treat as ask_missing for safety if private/capacity somehow false-null mix.
   if (!analysis.verdict) {
     return {
+      ...base,
       intent: "ask_missing",
-      missing: analysis.missing,
-      dateConflict,
       draftable: true,
     };
   }
 
   return {
+    ...base,
     intent: "confirm_fit",
-    missing: [],
-    dateConflict,
     draftable: true,
   };
 }

@@ -11,7 +11,8 @@ import {
   mergeIcpExtracted,
   STATED_BUDGET_USD,
 } from "../lib/crm/icp";
-import { resolveTargetStage } from "../lib/crm/writer";
+import { estimateAllInSpend } from "../lib/crm/pricing";
+import { buildReviewReason, resolveTargetStage } from "../lib/crm/writer";
 import { formatThreadMessagesForDraft } from "../lib/draft/context";
 import { draftHasEscalation } from "../lib/draft/escalation";
 import {
@@ -376,6 +377,206 @@ function threadFormatCases() {
   );
 }
 
+/** Sample catering email fees from plan fixture. */
+function sampleCateringFees() {
+  return {
+    fb_minimum_usd: 3000,
+    after_hours_usd_per_hour: 52.5,
+    venue_close_hour_local: 19,
+    staff: [
+      {
+        role: "bartender",
+        count: 2,
+        rate_usd_per_hour: 45,
+        min_hours: 4,
+      },
+      {
+        role: "event attendant",
+        count: 2,
+        rate_usd_per_hour: 35,
+        min_hours: 4,
+      },
+    ],
+    sales_tax_pct: 11.75,
+    processing_fee_pct: 3,
+    gratuity_pct: 18,
+    gratuity_mandatory: false,
+    building_fees_unknown: true,
+  };
+}
+
+function pricingEstimateCases() {
+  // F&B only $2500 → negotiate (unchanged band)
+  const onlyFb = resolveReplyIntent(
+    baseTriage({
+      extracted: {
+        min_spend_usd: 2500,
+        fully_private: true,
+        capacity_ok: true,
+        proposed_dates: [],
+        key_details: [],
+        fees: null,
+      },
+    }),
+  );
+  assert(onlyFb.intent === "negotiate", "2500 F&B only → negotiate");
+  assert(onlyFb.spendEstimate.estimated_all_in_usd === 2500, "all-in = F&B");
+  assert(onlyFb.spendEstimate.optional_gratuity_usd === null, "no tip");
+
+  // F&B $1800 only → confirm_fit
+  const under = resolveReplyIntent(
+    baseTriage({
+      extracted: {
+        min_spend_usd: 1800,
+        fully_private: true,
+        capacity_ok: true,
+        proposed_dates: [],
+        key_details: [],
+      },
+    }),
+  );
+  assert(under.intent === "confirm_fit", "1800 → confirm_fit");
+
+  // Missing min_spend → ask_missing, no invented all-in
+  const missing = resolveReplyIntent(
+    baseTriage({
+      extracted: {
+        min_spend_usd: null,
+        fully_private: true,
+        capacity_ok: true,
+        proposed_dates: [],
+        key_details: [],
+        fees: null,
+      },
+    }),
+  );
+  assert(missing.intent === "ask_missing", "missing F&B → ask_missing");
+  assert(missing.spendEstimate.usedForGating === false, "no gating without fb");
+  assert(missing.spendEstimate.estimated_all_in_usd === null, "no invented all-in");
+
+  const sample = estimateAllInSpend({
+    min_spend_usd: 3000,
+    fees: sampleCateringFees(),
+  });
+  // labor = 2*45*4 + 2*35*4 = 640; AH = 2*52.5 = 105; sub = 3745
+  // *1.1175 *1.03 ≈ 4310.59
+  assert(sample.labor_usd === 640, `labor 640 got ${sample.labor_usd}`);
+  assert(sample.after_hours_usd === 105, `AH 105 got ${sample.after_hours_usd}`);
+  assert(sample.usedForGating === true, "sample used for gating");
+  assert(
+    typeof sample.estimated_all_in_usd === "number" &&
+      sample.estimated_all_in_usd > 4200,
+    `sample all-in > 4200 got ${sample.estimated_all_in_usd}`,
+  );
+  assert(
+    sample.optional_gratuity_usd !== null && sample.optional_gratuity_usd > 0,
+    "optional tip present",
+  );
+  assert(sample.incomplete === true, "building fees → incomplete");
+
+  const sampleTriage = baseTriage({
+    extracted: {
+      min_spend_usd: 3000,
+      fully_private: true,
+      capacity_ok: true,
+      proposed_dates: [],
+      key_details: ["F&B min $3000"],
+      fees: sampleCateringFees(),
+    },
+  });
+  const sampleIntent = resolveReplyIntent(sampleTriage);
+  assert(sampleIntent.intent === "close_lost", "sample all-in → close_lost");
+  assert(sampleIntent.draftable === false, "sample not draftable");
+  assert(
+    resolveTargetStage(sampleTriage, true, sample) === "lost",
+    "sample all-in → HubSpot lost",
+  );
+  assert(
+    buildReviewReason(sampleTriage, sample) === "all_in_above_icp",
+    "review reason all_in_above_icp",
+  );
+
+  // Fees that stay in negotiate band (F&B 2200 + small labor, no tax)
+  const midFees = resolveReplyIntent(
+    baseTriage({
+      extracted: {
+        min_spend_usd: 2200,
+        fully_private: true,
+        capacity_ok: true,
+        proposed_dates: [],
+        key_details: [],
+        fees: {
+          fb_minimum_usd: 2200,
+          staff: [
+            {
+              role: "bartender",
+              count: 1,
+              rate_usd_per_hour: 40,
+              min_hours: 4,
+            },
+          ],
+          gratuity_pct: 18,
+          gratuity_mandatory: false,
+        },
+      },
+    }),
+  );
+  // labor = 1*40*4 = 160 → all-in 2360 → negotiate
+  assert(midFees.intent === "negotiate", "mid fees → negotiate");
+  assert(midFees.draftable === true, "mid fees draftable");
+  assert(
+    midFees.spendEstimate.estimated_all_in_usd === 2360,
+    `mid all-in 2360 got ${midFees.spendEstimate.estimated_all_in_usd}`,
+  );
+  assert(
+    midFees.spendEstimate.optional_gratuity_usd !== null,
+    "mid optional tip excluded from gate",
+  );
+
+  // Fee merge: prior staff + current tax
+  const mergedFees = mergeIcpExtracted(
+    {
+      min_spend_usd: 3000,
+      fees: {
+        fb_minimum_usd: 3000,
+        staff: [
+          {
+            role: "bartender",
+            count: 2,
+            rate_usd_per_hour: 45,
+            min_hours: 4,
+          },
+        ],
+      },
+    },
+    {
+      min_spend_usd: 3000,
+      fees: {
+        sales_tax_pct: 10,
+        processing_fee_pct: null,
+      },
+    },
+  );
+  assert(mergedFees.fees?.fb_minimum_usd === 3000, "merged keeps fb");
+  assert(
+    (mergedFees.fees?.staff?.length ?? 0) === 1,
+    "merged keeps prior staff",
+  );
+  assert(mergedFees.fees?.sales_tax_pct === 10, "merged takes current tax");
+
+  // Assumed venue close when after-hours rate but no close hour
+  const assumedClose = estimateAllInSpend({
+    min_spend_usd: 2000,
+    fees: {
+      fb_minimum_usd: 2000,
+      after_hours_usd_per_hour: 50,
+    },
+  });
+  assert(assumedClose.assumed_venue_close === true, "assumes 7pm close");
+  assert(assumedClose.after_hours_hours === 2, "2h after hours 7→9");
+  assert(assumedClose.after_hours_usd === 100, "AH $100");
+}
+
 function main() {
   console.log("1) Intent bands ($2k confirm / negotiate)…");
   intentCases();
@@ -395,6 +596,10 @@ function main() {
 
   console.log("5) Thread format helper…");
   threadFormatCases();
+  console.log("  ok");
+
+  console.log("6) Fee estimate + all-in intent gating…");
+  pricingEstimateCases();
   console.log("  ok");
 
   console.log("\nAll Day 7 draft automated checks passed.");

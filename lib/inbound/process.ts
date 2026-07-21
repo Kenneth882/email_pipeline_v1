@@ -119,6 +119,7 @@ export async function processClaimedInbound(
         ...mergedExtracted,
         proposed_dates: mergedExtracted.proposed_dates ?? [],
         key_details: mergedExtracted.key_details ?? [],
+        fees: mergedExtracted.fees ?? triage.extracted.fees ?? null,
       },
     };
 
@@ -182,6 +183,8 @@ export async function processClaimedInbound(
         needs_human_review: triage.needs_human_review,
         reply_required: replyRequired,
         reply_intent: intentResult.intent,
+        effective_spend_usd: intentResult.effectiveSpendUsd,
+        spend_estimate: intentResult.spendEstimate,
         match,
         merged_icp: mergedExtracted,
       },

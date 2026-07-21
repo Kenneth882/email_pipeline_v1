@@ -5,6 +5,7 @@ import {
   type ExtractedMemory,
 } from "@/lib/crm/icp";
 import { loadPriorExtractions } from "@/lib/crm/prior-extraction";
+import type { SpendEstimate } from "@/lib/crm/pricing";
 import {
   isDraftableIntent,
   resolveReplyIntent,
@@ -32,6 +33,7 @@ export type DraftContext = {
   /** Triage with merged ICP extract (thread memory). */
   triage: TriageResult;
   intentResult: ReplyIntentResult;
+  spendEstimate: SpendEstimate;
   recentThread: string;
   knownFacts: string;
   eventBriefText: string;
@@ -84,9 +86,36 @@ export function formatThreadMessagesForDraft(
   return blocks.length ? blocks.join("\n\n---\n\n") : "";
 }
 
-function buildPlaybook(intentResult: ReplyIntentResult): string {
+function buildPlaybook(
+  intentResult: ReplyIntentResult,
+  spendEstimate: SpendEstimate,
+): string {
   const budget = formatStatedBudget();
   const alts = EVENT_BRIEF.alternateDateWindows.join("; ");
+  const spendLines: string[] = [];
+  if (spendEstimate.usedForGating) {
+    spendLines.push(
+      `Code spend estimate (do not recalculate — use these figures): ${spendEstimate.breakdown}`,
+    );
+    if (typeof spendEstimate.fb_usd === "number") {
+      spendLines.push(`F&B minimum: $${Math.round(spendEstimate.fb_usd)}.`);
+    }
+    if (typeof intentResult.effectiveSpendUsd === "number") {
+      spendLines.push(
+        `Effective spend for fit: $${Math.round(intentResult.effectiveSpendUsd)}.`,
+      );
+    }
+    if (spendEstimate.optional_gratuity_usd !== null) {
+      spendLines.push(
+        `Optional tip (not in gate): ~$${Math.round(spendEstimate.optional_gratuity_usd)}.`,
+      );
+    }
+    if (spendEstimate.incomplete) {
+      spendLines.push(
+        "Estimate incomplete (e.g. building fees TBD) — acknowledge uncertainty; do not invent those fees.",
+      );
+    }
+  }
 
   switch (intentResult.intent) {
     case "ask_missing":
@@ -95,6 +124,7 @@ function buildPlaybook(intentResult: ReplyIntentResult): string {
         `Ask ONLY for these missing fields: ${intentResult.missing.join(", ") || "(none)"}.`,
         "Do not re-ask facts already listed under Known facts.",
         "Keep the ask short and specific.",
+        ...spendLines,
       ].join("\n");
     case "negotiate":
       return [
@@ -105,9 +135,10 @@ function buildPlaybook(intentResult: ReplyIntentResult): string {
         intentResult.dateConflict
           ? `Date conflict: primary ${EVENT_BRIEF.primaryDateLabel} may not work. Offer alternatives: ${alts}. Ask whether their offered price still applies on our dates.`
           : "Primary date still preferred unless they offered other dates.",
-        `If their min spend is above ${budget} but ≤ $${EVENT_BRIEF.icpMaxSpendUsd}, ask whether they can work toward ~${budget} (food + beer/wine tab).`,
-        "Never invent discounts, comps, or terms not in the event brief.",
+        `If their effective spend is above ${budget} but ≤ $${EVENT_BRIEF.icpMaxSpendUsd}, ask whether they can work toward ~${budget} (food + beer/wine tab), referencing the code spend estimate when present.`,
+        "Never invent discounts, comps, fee math, or terms not in the event brief / spend estimate.",
         "Do not re-ask privacy, capacity, or spend already listed under Known facts.",
+        ...spendLines,
       ].join("\n");
     case "confirm_fit":
       return [
@@ -116,6 +147,8 @@ function buildPlaybook(intentResult: ReplyIntentResult): string {
         "Ask for formal proposal / deposit terms / AV confirmation as a clear next step.",
         "Do not negotiate price unless they raise a new constraint.",
         "Do not re-ask facts already listed under Known facts.",
+        "Never invent fee math — use the code spend estimate when present.",
+        ...spendLines,
       ].join("\n");
     default:
       return "Intent: none — do not draft.";
@@ -185,6 +218,7 @@ export async function loadDraftContext(
       ...mergedExtracted,
       proposed_dates: mergedExtracted.proposed_dates ?? [],
       key_details: mergedExtracted.key_details ?? [],
+      fees: mergedExtracted.fees ?? currentTriage.extracted.fees ?? null,
     },
   };
 
@@ -267,7 +301,14 @@ export async function loadDraftContext(
   const senderEmail = (inbound.sender_email || "").toLowerCase().trim();
   if (!senderEmail) throw new Error("missing_sender_email");
 
-  const knownFacts = formatKnownFacts(mergedExtracted);
+  const knownFacts = [
+    formatKnownFacts(mergedExtracted),
+    intentResult.spendEstimate.usedForGating
+      ? `spend_estimate: ${intentResult.spendEstimate.breakdown}`
+      : null,
+  ]
+    .filter(Boolean)
+    .join("\n");
 
   return {
     venueId,
@@ -281,9 +322,10 @@ export async function loadDraftContext(
     sentFromAddress,
     triage,
     intentResult,
+    spendEstimate: intentResult.spendEstimate,
     recentThread,
     knownFacts,
     eventBriefText: buildEventBriefText(),
-    playbook: buildPlaybook(intentResult),
+    playbook: buildPlaybook(intentResult, intentResult.spendEstimate),
   };
 }

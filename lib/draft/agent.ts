@@ -50,7 +50,12 @@ export async function runDraftingAgent(opts: {
         message_id: messageId,
         actor: "drafter",
         event: "lost_no_draft",
-        detail: { intent: intent.intent, draftable: false },
+        detail: {
+          intent: intent.intent,
+          draftable: false,
+          effective_spend_usd: intent.effectiveSpendUsd,
+          spend_estimate: intent.spendEstimate,
+        },
       });
       return { ok: true, skipped: true, reason: "not_draftable" };
     }

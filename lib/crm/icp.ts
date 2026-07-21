@@ -1,3 +1,5 @@
+import type { FeeStaff, VenueFees } from "@/lib/triage/schema";
+
 export type IcpExtracted = {
   min_spend_usd?: number | null;
   fully_private?: boolean | null;
@@ -9,6 +11,7 @@ export type ExtractedMemory = IcpExtracted & {
   contact_name?: string | null;
   proposed_dates?: string[];
   key_details?: string[];
+  fees?: VenueFees | null;
 };
 
 export type IcpField = "min_spend_usd" | "fully_private" | "capacity_ok";
@@ -22,6 +25,7 @@ export const STATED_BUDGET_USD = 2000;
 /**
  * Deterministic ICP: min_spend ≤ 4200 AND fully_private AND capacity_ok.
  * Any null/undefined field → false (escalate-don't-invent).
+ * Stage / HubSpot still use F&B min_spend (not all-in).
  */
 export function computeIcpVerdict(extracted: IcpExtracted): boolean {
   const { min_spend_usd, fully_private, capacity_ok } = extracted;
@@ -62,7 +66,7 @@ export function listMissingIcpFields(extracted: IcpExtracted): IcpField[] {
   return missing;
 }
 
-/** Explicit commercial fail: no capacity or spend above ICP ceiling. */
+/** Explicit commercial fail on F&B min_spend or capacity (stage path). */
 export function isHardIcpFail(extracted: IcpExtracted): boolean {
   if (extracted.capacity_ok === false) return true;
   if (
@@ -78,19 +82,57 @@ export type IcpAnalysis = {
   verdict: boolean;
   missing: IcpField[];
   hardFail: boolean;
-  /** True when full ICP passes but spend is above stated budget. */
+  /** True when full ICP fields pass but effective spend is above stated budget. */
   negotiatePrice: boolean;
+  /** Spend used for intent bands (all-in when computable, else F&B min). */
+  effectiveSpendUsd: number | null;
 };
 
-export function analyzeIcp(extracted: IcpExtracted): IcpAnalysis {
+/**
+ * Analyze ICP + intent spend bands.
+ * Pass effectiveSpendUsd from estimateAllInSpend when available.
+ */
+export function analyzeIcp(
+  extracted: IcpExtracted,
+  opts?: { effectiveSpendUsd?: number | null },
+): IcpAnalysis {
   const missing = listMissingIcpFields(extracted);
-  const hardFail = isHardIcpFail(extracted);
-  const verdict = computeIcpVerdict(extracted);
+  const effectiveSpendUsd =
+    typeof opts?.effectiveSpendUsd === "number"
+      ? opts.effectiveSpendUsd
+      : typeof extracted.min_spend_usd === "number"
+        ? extracted.min_spend_usd
+        : null;
+
+  const hardFailOnSpend =
+    typeof effectiveSpendUsd === "number" &&
+    effectiveSpendUsd > ICP_MAX_SPEND_USD;
+  const hardFail =
+    extracted.capacity_ok === false ||
+    hardFailOnSpend ||
+    isHardIcpFail(extracted);
+
+  // Verdict for privacy/capacity + F&B still uses HubSpot-facing min_spend,
+  // but when effective spend hard-fails we treat commercial fit as failed.
+  const baseVerdict = computeIcpVerdict(extracted);
+  const verdict =
+    baseVerdict &&
+    !hardFailOnSpend &&
+    (typeof effectiveSpendUsd !== "number" ||
+      effectiveSpendUsd <= ICP_MAX_SPEND_USD);
+
   const negotiatePrice =
     verdict &&
-    typeof extracted.min_spend_usd === "number" &&
-    extracted.min_spend_usd > STATED_BUDGET_USD;
-  return { verdict, missing, hardFail, negotiatePrice };
+    typeof effectiveSpendUsd === "number" &&
+    effectiveSpendUsd > STATED_BUDGET_USD;
+
+  return {
+    verdict,
+    missing,
+    hardFail,
+    negotiatePrice,
+    effectiveSpendUsd,
+  };
 }
 
 function isPresent<T>(v: T | null | undefined): v is T {
@@ -107,6 +149,62 @@ function mergeKeyDetails(prior: string[], current: string[]): string[] {
     out.push(d.trim());
   }
   return out;
+}
+
+function mergeNullableField<T>(
+  prior: T | null | undefined,
+  current: T | null | undefined,
+): T | null {
+  if (isPresent(current)) return current;
+  if (isPresent(prior)) return prior;
+  return null;
+}
+
+function mergeStaff(
+  prior: FeeStaff[] | null | undefined,
+  current: FeeStaff[] | null | undefined,
+): FeeStaff[] | null {
+  if (current && current.length > 0) return current.map((s) => ({ ...s }));
+  if (prior && prior.length > 0) return prior.map((s) => ({ ...s }));
+  return null;
+}
+
+/** Deep-merge fees: current non-null wins per field; staff replaced when current provides rows. */
+export function mergeFees(
+  prior: VenueFees | null | undefined,
+  current: VenueFees | null | undefined,
+): VenueFees | null {
+  if (!prior && !current) return null;
+  const p = prior ?? {};
+  const c = current ?? {};
+  const merged: VenueFees = {
+    fb_minimum_usd: mergeNullableField(p.fb_minimum_usd, c.fb_minimum_usd),
+    after_hours_usd_per_hour: mergeNullableField(
+      p.after_hours_usd_per_hour,
+      c.after_hours_usd_per_hour,
+    ),
+    venue_close_hour_local: mergeNullableField(
+      p.venue_close_hour_local,
+      c.venue_close_hour_local,
+    ),
+    staff: mergeStaff(p.staff, c.staff),
+    sales_tax_pct: mergeNullableField(p.sales_tax_pct, c.sales_tax_pct),
+    processing_fee_pct: mergeNullableField(
+      p.processing_fee_pct,
+      c.processing_fee_pct,
+    ),
+    gratuity_pct: mergeNullableField(p.gratuity_pct, c.gratuity_pct),
+    gratuity_mandatory: mergeNullableField(
+      p.gratuity_mandatory,
+      c.gratuity_mandatory,
+    ),
+    building_fees_unknown: mergeNullableField(
+      p.building_fees_unknown,
+      c.building_fees_unknown,
+    ),
+  };
+  const hasAny = Object.values(merged).some((v) => v !== null && v !== undefined);
+  return hasAny ? merged : null;
 }
 
 /**
@@ -138,6 +236,7 @@ export function mergeIcpExtracted(
     proposed_dates:
       currentDates.length > 0 ? [...currentDates] : [...priorDates],
     key_details: mergeKeyDetails(priorDetails, currentDetails),
+    fees: mergeFees(prior.fees, current.fees),
   };
 }
 

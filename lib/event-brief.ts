@@ -18,6 +18,9 @@ export const EVENT_BRIEF = {
   icpMaxSpendUsd: ICP_MAX_SPEND_USD,
   foodBudgetUsd: 1200,
   barTabUsd: 800,
+  /** Local 24h hours for after-hours / labor math (6–9pm). */
+  eventStartHourLocal: 18,
+  eventEndHourLocal: 21,
   alternateDateWindows: [
     "Thursday, August 13th from 6–9pm",
     "Wednesday, August 19th from 6–9pm",

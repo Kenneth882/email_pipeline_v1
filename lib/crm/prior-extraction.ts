@@ -3,6 +3,65 @@ import {
   foldExtractions,
   type ExtractedMemory,
 } from "@/lib/crm/icp";
+import type { FeeStaff, VenueFees } from "@/lib/triage/schema";
+
+function asNullableNumber(v: unknown): number | null | undefined {
+  if (v === null) return null;
+  if (typeof v === "number" && Number.isFinite(v)) return v;
+  return undefined;
+}
+
+function asNullableBoolean(v: unknown): boolean | null | undefined {
+  if (v === null) return null;
+  if (typeof v === "boolean") return v;
+  return undefined;
+}
+
+function asStaff(raw: unknown): FeeStaff[] | null | undefined {
+  if (raw === null) return null;
+  if (!Array.isArray(raw)) return undefined;
+  const rows: FeeStaff[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object") continue;
+    const o = item as Record<string, unknown>;
+    if (
+      typeof o.role !== "string" ||
+      typeof o.count !== "number" ||
+      typeof o.rate_usd_per_hour !== "number" ||
+      typeof o.min_hours !== "number"
+    ) {
+      continue;
+    }
+    rows.push({
+      role: o.role,
+      count: o.count,
+      rate_usd_per_hour: o.rate_usd_per_hour,
+      min_hours: o.min_hours,
+    });
+  }
+  return rows;
+}
+
+function asFees(raw: unknown): VenueFees | null | undefined {
+  if (raw === null) return null;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const o = raw as Record<string, unknown>;
+  const fees: VenueFees = {
+    fb_minimum_usd: asNullableNumber(o.fb_minimum_usd),
+    after_hours_usd_per_hour: asNullableNumber(o.after_hours_usd_per_hour),
+    venue_close_hour_local: asNullableNumber(o.venue_close_hour_local),
+    staff: asStaff(o.staff),
+    sales_tax_pct: asNullableNumber(o.sales_tax_pct),
+    processing_fee_pct: asNullableNumber(o.processing_fee_pct),
+    gratuity_pct: asNullableNumber(o.gratuity_pct),
+    gratuity_mandatory: asNullableBoolean(o.gratuity_mandatory),
+    building_fees_unknown: asNullableBoolean(o.building_fees_unknown),
+  };
+  const hasAny = Object.values(fees).some(
+    (v) => v !== null && v !== undefined,
+  );
+  return hasAny ? fees : null;
+}
 
 function asExtractedMemory(raw: unknown): ExtractedMemory {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
@@ -40,6 +99,7 @@ function asExtractedMemory(raw: unknown): ExtractedMemory {
           : undefined,
     proposed_dates: dates,
     key_details: details,
+    fees: asFees(o.fees),
   };
 }
 
