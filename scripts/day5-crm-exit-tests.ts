@@ -68,6 +68,23 @@ function icpCases() {
     }) === false,
     "ICP false when undefined spend",
   );
+  assert(
+    computeIcpVerdict({
+      min_spend_usd: 2000,
+      fully_private: false,
+      capacity_ok: true,
+    }) === false,
+    "ICP false when not private",
+  );
+  assert(
+    computeIcpVerdict({
+      min_spend_usd: 2000,
+      fully_private: true,
+      capacity_ok: true,
+      provides_food: false,
+    }) === false,
+    "ICP false when no in-house food",
+  );
 }
 
 function whitelistCases() {
@@ -160,6 +177,62 @@ function targetStageCases() {
       false,
     ) === "lost",
     "hard fail capacity → lost",
+  );
+  assert(
+    resolveTargetStage(
+      baseTriage({
+        classification: "proposal",
+        confidence: 0.6,
+        needs_human_review: true,
+        reply_required: false,
+        extracted: {
+          min_spend_usd: null,
+          fully_private: false,
+          capacity_ok: null,
+          provides_food: false,
+          proposed_dates: [],
+          key_details: [
+            "Cash bar package — bar remains open to public",
+            "No in-house food; partner caterer only",
+          ],
+        },
+      }),
+      false,
+    ) === "lost",
+    "Burwood-style not private + no food → lost (beats needs_review)",
+  );
+  assert(
+    resolveTargetStage(
+      baseTriage({
+        needs_human_review: true,
+        extracted: {
+          min_spend_usd: 2000,
+          fully_private: false,
+          capacity_ok: true,
+          proposed_dates: [],
+          key_details: [],
+        },
+      }),
+      false,
+    ) === "lost",
+    "fully_private false → lost",
+  );
+  assert(
+    resolveTargetStage(
+      baseTriage({
+        needs_human_review: true,
+        extracted: {
+          min_spend_usd: 2000,
+          fully_private: true,
+          capacity_ok: true,
+          provides_food: false,
+          proposed_dates: [],
+          key_details: ["Outside catering / BYO only"],
+        },
+      }),
+      false,
+    ) === "lost",
+    "provides_food false → lost",
   );
   assert(
     resolveTargetStage(baseTriage({ classification: "proposal" }), true) ===

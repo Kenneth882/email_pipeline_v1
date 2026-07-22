@@ -187,6 +187,40 @@ function lostNoDraftCases() {
   assert(noCapIntent.draftable === false, "no capacity not draftable");
   assert(resolveTargetStage(noCap, false) === "lost", "no capacity → lost");
 
+  const notPrivate = baseTriage({
+    confidence: 0.6,
+    needs_human_review: true,
+    extracted: {
+      min_spend_usd: null,
+      fully_private: false,
+      capacity_ok: null,
+      provides_food: false,
+      proposed_dates: [],
+      key_details: ["bar open to public", "outside catering only"],
+    },
+  });
+  const notPrivateIntent = resolveReplyIntent(notPrivate);
+  assert(notPrivateIntent.intent === "close_lost", "not private → close_lost");
+  assert(notPrivateIntent.draftable === false, "not private not draftable");
+  assert(
+    resolveTargetStage(notPrivate, false) === "lost",
+    "not private + no food → lost",
+  );
+
+  const noFood = baseTriage({
+    extracted: {
+      min_spend_usd: 2000,
+      fully_private: true,
+      capacity_ok: true,
+      provides_food: false,
+      proposed_dates: [],
+      key_details: ["BYO / partner caterer only"],
+    },
+  });
+  const noFoodIntent = resolveReplyIntent(noFood);
+  assert(noFoodIntent.intent === "close_lost", "no food → close_lost");
+  assert(resolveTargetStage(noFood, false) === "lost", "no food → lost");
+
   const rejection = resolveReplyIntent(
     baseTriage({ classification: "rejection", reply_required: true }),
   );

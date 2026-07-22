@@ -4,6 +4,8 @@ export type IcpExtracted = {
   min_spend_usd?: number | null;
   fully_private?: boolean | null;
   capacity_ok?: boolean | null;
+  /** Venue serves food in-house. Explicit false → Lost. */
+  provides_food?: boolean | null;
 };
 
 /** Full triage extract shape used for cross-message ICP memory. */
@@ -26,9 +28,11 @@ export const STATED_BUDGET_USD = 2000;
  * Deterministic ICP: min_spend ≤ 4200 AND fully_private AND capacity_ok.
  * Any null/undefined field → false (escalate-don't-invent).
  * Stage / HubSpot still use F&B min_spend (not all-in).
+ * provides_food is not required for a positive verdict; explicit false is a hard fail.
  */
 export function computeIcpVerdict(extracted: IcpExtracted): boolean {
-  const { min_spend_usd, fully_private, capacity_ok } = extracted;
+  const { min_spend_usd, fully_private, capacity_ok, provides_food } =
+    extracted;
   if (
     min_spend_usd === null ||
     min_spend_usd === undefined ||
@@ -39,6 +43,7 @@ export function computeIcpVerdict(extracted: IcpExtracted): boolean {
   ) {
     return false;
   }
+  if (provides_food === false) return false;
   return (
     min_spend_usd <= ICP_MAX_SPEND_USD &&
     fully_private === true &&
@@ -66,9 +71,14 @@ export function listMissingIcpFields(extracted: IcpExtracted): IcpField[] {
   return missing;
 }
 
-/** Explicit commercial fail on F&B min_spend or capacity (stage path). */
+/**
+ * Explicit commercial fail → Lost (beats Needs Review).
+ * capacity false, spend over ceiling, not private, or no in-house food.
+ */
 export function isHardIcpFail(extracted: IcpExtracted): boolean {
   if (extracted.capacity_ok === false) return true;
+  if (extracted.fully_private === false) return true;
+  if (extracted.provides_food === false) return true;
   if (
     typeof extracted.min_spend_usd === "number" &&
     extracted.min_spend_usd > ICP_MAX_SPEND_USD
@@ -108,7 +118,6 @@ export function analyzeIcp(
     typeof effectiveSpendUsd === "number" &&
     effectiveSpendUsd > ICP_MAX_SPEND_USD;
   const hardFail =
-    extracted.capacity_ok === false ||
     hardFailOnSpend ||
     isHardIcpFail(extracted);
 
@@ -231,6 +240,9 @@ export function mergeIcpExtracted(
     capacity_ok: isPresent(current.capacity_ok)
       ? current.capacity_ok
       : (prior.capacity_ok ?? null),
+    provides_food: isPresent(current.provides_food)
+      ? current.provides_food
+      : (prior.provides_food ?? null),
     contact_name: isPresent(current.contact_name)
       ? current.contact_name
       : (prior.contact_name ?? null),
@@ -259,6 +271,9 @@ export function formatKnownFacts(extracted: ExtractedMemory): string {
   }
   if (isPresent(extracted.capacity_ok)) {
     lines.push(`capacity_ok: ${extracted.capacity_ok}`);
+  }
+  if (isPresent(extracted.provides_food)) {
+    lines.push(`provides_food: ${extracted.provides_food}`);
   }
   if (isPresent(extracted.min_spend_usd)) {
     lines.push(`min_spend_usd: ${extracted.min_spend_usd}`);

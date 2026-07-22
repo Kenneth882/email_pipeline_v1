@@ -73,6 +73,15 @@ export function resolveReplyIntent(triage: TriageResult): ReplyIntentResult {
     effectiveSpendUsd: analysis.effectiveSpendUsd,
   };
 
+  // Hard commercial / rejection fails win over needs_review (stage + no draft).
+  if (triage.classification === "rejection" || analysis.hardFail) {
+    return {
+      ...base,
+      intent: "close_lost",
+      draftable: false,
+    };
+  }
+
   if (
     triage.classification === "auto_reply" ||
     triage.classification === "bounce" ||
@@ -84,14 +93,6 @@ export function resolveReplyIntent(triage: TriageResult): ReplyIntentResult {
     return {
       ...base,
       intent: null,
-      draftable: false,
-    };
-  }
-
-  if (triage.classification === "rejection" || analysis.hardFail) {
-    return {
-      ...base,
-      intent: "close_lost",
       draftable: false,
     };
   }

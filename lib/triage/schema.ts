@@ -45,6 +45,8 @@ export const triageExtractedSchema = z.object({
   min_spend_usd: z.number().nullable().optional(),
   fully_private: z.boolean().nullable().optional(),
   capacity_ok: z.boolean().nullable().optional(),
+  /** Venue serves food in-house. false = BYO / outside caterer only (hard fail). */
+  provides_food: z.boolean().nullable().optional(),
   contact_name: z.string().nullable().optional(),
   proposed_dates: z.array(z.string()).default([]),
   key_details: z.array(z.string()).default([]),

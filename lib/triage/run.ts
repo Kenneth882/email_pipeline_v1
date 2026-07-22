@@ -15,6 +15,7 @@ Return ONLY valid JSON matching this shape:
     "min_spend_usd": number|null,
     "fully_private": boolean|null,
     "capacity_ok": boolean|null,
+    "provides_food": boolean|null,
     "contact_name": string|null,
     "proposed_dates": string[],
     "key_details": string[],
@@ -51,7 +52,8 @@ Rules:
 - Hard contract (please sign/execute, countersign, governing law, indemnity, attached contract to execute as a legal document): classification "contract", needs_human_review true, reply_required false.
 - Auto-replies / OOO → auto_reply, reply_required false.
 - capacity_ok: true only if they can host ~70–80 standing; false if they explicitly cannot; null if capacity is unmentioned.
-- fully_private: true/false only when stated; null if unmentioned.
+- fully_private: true when a full buyout or private room with no public access; false when the bar/space remains open to the public or is not fully private; null if unmentioned.
+- provides_food: true when the venue serves food in-house; false when no in-house food, BYO/outside catering only, or they only partner with a nearby third-party caterer (partner caterer = provides_food false); null if unstated.
 - min_spend_usd: number only when a clear F&B minimum or (rental-only) commercial floor is stated; null if unmentioned. Never invent spend.
 - Be conservative on confidence.
 - Do not invent numbers. Use null when unknown.

@@ -92,6 +92,12 @@ function asExtractedMemory(raw: unknown): ExtractedMemory {
         : o.capacity_ok === null
           ? null
           : undefined,
+    provides_food:
+      typeof o.provides_food === "boolean"
+        ? o.provides_food
+        : o.provides_food === null
+          ? null
+          : undefined,
     contact_name:
       typeof o.contact_name === "string"
         ? o.contact_name
