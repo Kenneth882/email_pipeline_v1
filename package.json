@@ -12,7 +12,8 @@
     "test:day5": "node --import tsx scripts/day5-crm-exit-tests.ts",
     "test:day7": "node --import tsx scripts/day7-draft-exit-tests.ts",
     "test:drip-dry": "node --env-file=.env --import tsx scripts/drip-dry-run.ts",
-    "seed:upsert": "node --env-file=.env --import tsx scripts/upsert-seed-venues.ts"
+    "seed:upsert": "node --env-file=.env --import tsx scripts/upsert-seed-venues.ts",
+    "reprocess:inbound": "node --env-file=.env --import tsx scripts/reprocess-inbound.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.112.1",
