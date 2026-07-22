@@ -3,7 +3,7 @@ import type { ExtractedMemory } from "@/lib/crm/icp";
 import type { VenueFees } from "@/lib/triage/schema";
 
 export type SpendEstimate = {
-  /** F&B / buyout minimum used as base. */
+  /** F&B / buyout minimum used as base (excludes room rental). */
   fb_usd: number | null;
   labor_usd: number;
   after_hours_usd: number;
@@ -31,7 +31,33 @@ function formatUsd(n: number): string {
 }
 
 /**
- * Deterministic all-in spend from structured fees + F&B min.
+ * Resolve F&B floor vs room rental without double-counting when triage
+ * mirrored rental-only into min_spend_usd.
+ */
+function resolveCommercialBases(
+  extracted: Pick<ExtractedMemory, "min_spend_usd" | "fees">,
+): { fb: number | null; roomRental: number | null } {
+  const fees: VenueFees = extracted.fees ?? {};
+  const roomRental =
+    typeof fees.room_rental_usd === "number" ? fees.room_rental_usd : null;
+
+  if (typeof fees.fb_minimum_usd === "number") {
+    return { fb: fees.fb_minimum_usd, roomRental };
+  }
+
+  if (typeof extracted.min_spend_usd === "number") {
+    // Rental-only: min_spend echoes room_rental — do not count twice.
+    if (roomRental !== null && extracted.min_spend_usd === roomRental) {
+      return { fb: null, roomRental };
+    }
+    return { fb: extracted.min_spend_usd, roomRental };
+  }
+
+  return { fb: null, roomRental };
+}
+
+/**
+ * Deterministic all-in spend from structured fees + F&B min + room rental.
  * Lower-bound for gating: optional gratuity excluded unless mandatory.
  */
 export function estimateAllInSpend(
@@ -42,12 +68,11 @@ export function estimateAllInSpend(
   let assumed_venue_close = false;
   let incomplete = false;
 
-  const fb =
-    typeof fees.fb_minimum_usd === "number"
-      ? fees.fb_minimum_usd
-      : typeof extracted.min_spend_usd === "number"
-        ? extracted.min_spend_usd
-        : null;
+  const { fb, roomRental } = resolveCommercialBases(extracted);
+  const commercialBase =
+    fb !== null || roomRental !== null
+      ? roundCents((fb ?? 0) + (roomRental ?? 0))
+      : null;
 
   const eventHours =
     EVENT_BRIEF.eventEndHourLocal - EVENT_BRIEF.eventStartHourLocal;
@@ -82,7 +107,7 @@ export function estimateAllInSpend(
     notes.push("building/landlord fees unknown — excluded from estimate");
   }
 
-  if (fb === null) {
+  if (commercialBase === null) {
     return {
       fb_usd: null,
       labor_usd,
@@ -95,11 +120,11 @@ export function estimateAllInSpend(
       incomplete: incomplete || labor_usd > 0 || after_hours_usd > 0,
       assumed_venue_close,
       notes,
-      breakdown: "(no F&B minimum — cannot estimate all-in)",
+      breakdown: "(no F&B minimum or room rental — cannot estimate all-in)",
     };
   }
 
-  const subtotal = roundCents(fb + labor_usd + after_hours_usd);
+  const subtotal = roundCents(commercialBase + labor_usd + after_hours_usd);
   let withFees = subtotal;
   if (typeof fees.sales_tax_pct === "number") {
     withFees = withFees * (1 + fees.sales_tax_pct / 100);
@@ -127,7 +152,10 @@ export function estimateAllInSpend(
     }
   }
 
-  const parts: string[] = [`F&B ${formatUsd(fb)}`];
+  const parts: string[] = [];
+  if (fb !== null) parts.push(`F&B ${formatUsd(fb)}`);
+  if (roomRental !== null) parts.push(`room rental ${formatUsd(roomRental)}`);
+  if (parts.length === 0) parts.push(`base ${formatUsd(commercialBase)}`);
   if (labor_usd > 0) parts.push(`labor ${formatUsd(labor_usd)}`);
   if (after_hours_usd > 0) {
     parts.push(

@@ -188,6 +188,47 @@ function targetStageCases() {
     "needs_human_review wins",
   );
   assert(
+    resolveTargetStage(
+      baseTriage({
+        classification: "proposal",
+        confidence: 0.65,
+        needs_human_review: true,
+        reply_required: false,
+        extracted: {
+          min_spend_usd: 5000,
+          fully_private: true,
+          capacity_ok: true,
+          proposed_dates: [],
+          key_details: ["Room rental $5000 (F&B additional)"],
+          fees: {
+            room_rental_usd: 5000,
+            fb_minimum_usd: null,
+          },
+        },
+      }),
+      false,
+    ) === "lost",
+    "360-style $5k room rental → lost (beats needs_review)",
+  );
+  assert(
+    resolveTargetStage(
+      baseTriage({
+        classification: "proposal",
+        needs_human_review: true,
+        extracted: {
+          min_spend_usd: null,
+          fully_private: true,
+          capacity_ok: true,
+          proposed_dates: [],
+          key_details: ["Room rental $5000 (F&B additional)"],
+          fees: { room_rental_usd: 5000 },
+        },
+      }),
+      false,
+    ) === "lost",
+    "room_rental_usd alone → lost via all-in gate",
+  );
+  assert(
     buildReviewReason(
       baseTriage({ classification: "contract", needs_human_review: true }),
     ) === "contract_firewall",

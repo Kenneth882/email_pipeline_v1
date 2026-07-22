@@ -48,6 +48,7 @@ function asFees(raw: unknown): VenueFees | null | undefined {
   const o = raw as Record<string, unknown>;
   const fees: VenueFees = {
     fb_minimum_usd: asNullableNumber(o.fb_minimum_usd),
+    room_rental_usd: asNullableNumber(o.room_rental_usd),
     after_hours_usd_per_hour: asNullableNumber(o.after_hours_usd_per_hour),
     venue_close_hour_local: asNullableNumber(o.venue_close_hour_local),
     staff: asStaff(o.staff),

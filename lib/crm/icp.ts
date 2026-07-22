@@ -179,6 +179,7 @@ export function mergeFees(
   const c = current ?? {};
   const merged: VenueFees = {
     fb_minimum_usd: mergeNullableField(p.fb_minimum_usd, c.fb_minimum_usd),
+    room_rental_usd: mergeNullableField(p.room_rental_usd, c.room_rental_usd),
     after_hours_usd_per_hour: mergeNullableField(
       p.after_hours_usd_per_hour,
       c.after_hours_usd_per_hour,
@@ -261,6 +262,10 @@ export function formatKnownFacts(extracted: ExtractedMemory): string {
   }
   if (isPresent(extracted.min_spend_usd)) {
     lines.push(`min_spend_usd: ${extracted.min_spend_usd}`);
+  }
+  const roomRental = extracted.fees?.room_rental_usd;
+  if (isPresent(roomRental)) {
+    lines.push(`room_rental_usd: ${roomRental}`);
   }
   if (isPresent(extracted.contact_name) && extracted.contact_name.trim()) {
     lines.push(`contact_name: ${extracted.contact_name}`);

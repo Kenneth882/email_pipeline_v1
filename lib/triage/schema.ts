@@ -23,6 +23,8 @@ export const feeStaffSchema = z.object({
 export const venueFeesSchema = z
   .object({
     fb_minimum_usd: z.number().nullable().optional(),
+    /** Space / room / facility rental or buyout fee (may be separate from F&B). */
+    room_rental_usd: z.number().nullable().optional(),
     after_hours_usd_per_hour: z.number().nullable().optional(),
     /** 24h local hour venue typically closes, e.g. 19 for 7pm. */
     venue_close_hour_local: z.number().nullable().optional(),

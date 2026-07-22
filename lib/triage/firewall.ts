@@ -25,6 +25,7 @@ function hasCommercialBodyFacts(result: TriageResult): boolean {
     const f = e.fees;
     if (
       f.fb_minimum_usd != null ||
+      f.room_rental_usd != null ||
       f.after_hours_usd_per_hour != null ||
       (Array.isArray(f.staff) && f.staff.length > 0) ||
       f.sales_tax_pct != null ||

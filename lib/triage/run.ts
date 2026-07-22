@@ -20,6 +20,7 @@ Return ONLY valid JSON matching this shape:
     "key_details": string[],
     "fees": {
       "fb_minimum_usd": number|null,
+      "room_rental_usd": number|null,
       "after_hours_usd_per_hour": number|null,
       "venue_close_hour_local": number|null,
       "staff": [{"role": string, "count": number, "rate_usd_per_hour": number, "min_hours": number}]|null,
@@ -37,7 +38,10 @@ Return ONLY valid JSON matching this shape:
 Rules:
 - Put every commercial/logistical fact into key_details (fees, minimums, blackouts, deposits, capacity caveats).
 - Also extract structured fee line items into fees when stated. Never invent fee numbers — use null / omit.
-- min_spend_usd AND fees.fb_minimum_usd: set both from a clear F&B / food & beverage / buyout minimum when stated.
+- min_spend_usd AND fees.fb_minimum_usd: set both from a clear F&B / food & beverage minimum when stated.
+- Room rental / space fee / facility fee / space buyout (even when F&B is additional): set fees.room_rental_usd. If peak and non-peak both stated, use the lowest (e.g. non-peak $5,000). Add a key_details line like "Room rental $5000 (F&B additional)".
+- When room rental is stated and no F&B minimum is stated, also set min_spend_usd = fees.room_rental_usd so spend gates still fire.
+- When BOTH F&B minimum and room rental are stated: min_spend_usd / fb_minimum_usd = F&B only; fees.room_rental_usd = rental (all-in math adds them).
 - venue_close_hour_local: 24h local hour (e.g. 19 if they operate until 7pm). null if unstated.
 - staff: one row per required role (bartender, attendant, etc.) with count, hourly rate, and min hours when stated.
 - gratuity_mandatory: true only if tip/gratuity is required; false if optional/appreciated; null if unmentioned.
@@ -47,7 +51,7 @@ Rules:
 - Auto-replies / OOO → auto_reply, reply_required false.
 - capacity_ok: true only if they can host ~70–80 standing; false if they explicitly cannot; null if capacity is unmentioned.
 - fully_private: true/false only when stated; null if unmentioned.
-- min_spend_usd: number only when a clear minimum/price is stated; null if unmentioned. Never invent spend.
+- min_spend_usd: number only when a clear F&B minimum or (rental-only) commercial floor is stated; null if unmentioned. Never invent spend.
 - Be conservative on confidence.
 - Do not invent numbers. Use null when unknown.
 - Treat attachment_text blocks as part of the venue message for extraction (fees, capacity, terms).
