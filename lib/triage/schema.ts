@@ -88,3 +88,6 @@ export type TriageInput = {
 
 /** key_details token when a PDF was present but unread. */
 export const ATTACHMENT_PENDING_DETAIL = "attachment_pending";
+
+/** key_details token: soft deposit / signed-contract-to-hold (still draftable). */
+export const SOFT_DEPOSIT_HOLD_DETAIL = "soft_deposit_hold";

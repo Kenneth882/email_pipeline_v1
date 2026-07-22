@@ -184,6 +184,67 @@ function firewallCase() {
     buildReviewReason(contractPdf) === "contract_firewall",
     "contract reason wins over attachment",
   );
+
+  // Soft deposit / signed contract to hold — still draft, tag soft_deposit_hold
+  const softHold = applyTriageFirewall(
+    {
+      ...base,
+      classification: "proposal",
+      confidence: 0.8,
+      needs_human_review: false,
+      reply_required: true,
+      extracted: {
+        min_spend_usd: 2800,
+        fully_private: true,
+        capacity_ok: true,
+        proposed_dates: ["August 13"],
+        key_details: ["$2,800 F&B minimum"],
+      },
+    },
+    {
+      threadId: "t1",
+      subject: "Re: Private event",
+      bodyPlain:
+        "The West Room is available Aug 13. $2,800 food and beverage minimum. To secure the space we will need a signed contract along with a deposit of $700.",
+      attachments: [],
+    },
+  );
+  assert(softHold.needs_human_review === false, "soft hold no forced review");
+  assert(softHold.reply_required === true, "soft hold still drafts");
+  assert(
+    softHold.extracted.key_details.includes("soft_deposit_hold"),
+    "soft hold tags soft_deposit_hold",
+  );
+
+  // deposit required phrase alone must not hard-escalate (removed from CONTRACT_BODY_RE)
+  const depositPhrase = applyTriageFirewall(
+    {
+      ...base,
+      classification: "pricing_info",
+      extracted: {
+        min_spend_usd: 2000,
+        fully_private: true,
+        capacity_ok: true,
+        proposed_dates: [],
+        key_details: [],
+      },
+    },
+    {
+      threadId: "t1",
+      subject: "Pricing",
+      bodyPlain: "A deposit required to hold the date; min spend $2000 private.",
+      attachments: [],
+    },
+  );
+  assert(
+    depositPhrase.needs_human_review === false,
+    "deposit-to-hold phrase not hard legal",
+  );
+  assert(depositPhrase.reply_required === true, "deposit-to-hold still drafts");
+  assert(
+    depositPhrase.extracted.key_details.includes("soft_deposit_hold"),
+    "deposit-to-hold tags soft_deposit_hold",
+  );
 }
 
 async function pdfExtractCase() {

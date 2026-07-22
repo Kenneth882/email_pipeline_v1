@@ -191,6 +191,28 @@ function targetStageCases() {
     resolveTargetStage(
       baseTriage({
         classification: "proposal",
+        confidence: 0.8,
+        needs_human_review: false,
+        reply_required: true,
+        extracted: {
+          min_spend_usd: 2800,
+          fully_private: true,
+          capacity_ok: true,
+          proposed_dates: ["August 13"],
+          key_details: [
+            "soft_deposit_hold",
+            "Signed contract and $700 deposit required to secure space",
+          ],
+        },
+      }),
+      true,
+    ) === "4_proposal_received",
+    "soft deposit hold proposal → 4 (not needs_review)",
+  );
+  assert(
+    resolveTargetStage(
+      baseTriage({
+        classification: "proposal",
         confidence: 0.65,
         needs_human_review: true,
         reply_required: false,
@@ -266,6 +288,39 @@ function firewallStillBlocks() {
   );
   assert(contract.reply_required === false, "contract must not reply");
   assert(contract.needs_human_review === true, "contract must review");
+
+  const softHold = applyTriageFirewall(
+    baseTriage({
+      classification: "proposal",
+      confidence: 0.8,
+      needs_human_review: false,
+      reply_required: true,
+      extracted: {
+        min_spend_usd: 2800,
+        fully_private: true,
+        capacity_ok: true,
+        proposed_dates: [],
+        key_details: ["$2800 F&B"],
+      },
+    }),
+    {
+      threadId: "t1",
+      subject: "Proposal",
+      bodyPlain:
+        "To secure the space we will need a signed contract along with a deposit of $700. F&B min $2800.",
+      attachments: [],
+    },
+  );
+  assert(softHold.needs_human_review === false, "soft hold no review flag");
+  assert(softHold.reply_required === true, "soft hold drafts");
+  assert(
+    (softHold.extracted.key_details ?? []).includes("soft_deposit_hold"),
+    "soft hold tagged",
+  );
+  assert(
+    resolveTargetStage(softHold, true) === "4_proposal_received",
+    "soft hold → proposal stage",
+  );
 }
 
 function softUnreadPdfCases() {

@@ -28,6 +28,7 @@ Rules:
 - If venue asks to call say that you cannot and ask them about the venue details that are needed.
 - If venue says they dont do food or you need to bring your own like catering that makes the venue not applicable to the icp.
 - Payment preference: always request ONE combined group tab for food + drinks. Never propose splitting checks, individual tabs, or switching mid-event. If the venue offers tab flexibility, acknowledge briefly and state we want a single group tab covering F&B.
+- If key_details contains soft_deposit_hold (or clear deposit / signed-contract-to-hold language): start the body with [ESCALATION: deposit/contract hold — human must approve before signing] then write the normal commercial reply. Still address other key_details; do not invent signing terms; still never send.
 `;
 
 

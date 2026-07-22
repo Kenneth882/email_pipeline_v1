@@ -47,7 +47,8 @@ Rules:
 - gratuity_mandatory: true only if tip/gratuity is required; false if optional/appreciated; null if unmentioned.
 - building_fees_unknown: true when they mention building/landlord fees that vary or need follow-up.
 - fees: null when the email has no fee line items beyond a simple min spend (still set min_spend_usd).
-- Contracts / legal / signature requests → classification "contract", needs_human_review true, reply_required false.
+- Soft hold (deposit / signed contract to hold or secure the date, inside an otherwise commercial pricing_info or proposal reply): keep classification pricing_info or proposal; needs_human_review false; reply_required true; add key_details token "soft_deposit_hold" and note the deposit amount if stated. Do NOT escalate soft holds to contract.
+- Hard contract (please sign/execute, countersign, governing law, indemnity, attached contract to execute as a legal document): classification "contract", needs_human_review true, reply_required false.
 - Auto-replies / OOO → auto_reply, reply_required false.
 - capacity_ok: true only if they can host ~70–80 standing; false if they explicitly cannot; null if capacity is unmentioned.
 - fully_private: true/false only when stated; null if unmentioned.
