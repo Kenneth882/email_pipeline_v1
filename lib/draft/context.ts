@@ -162,6 +162,7 @@ function buildEventBriefText(): string {
     `Privacy: fully private required`,
     `Stated budget: ~${formatStatedBudget()} min spend (food ~$${EVENT_BRIEF.foodBudgetUsd}, bar ~$${EVENT_BRIEF.barTabUsd})`,
     `ICP max spend: $${EVENT_BRIEF.icpMaxSpendUsd}`,
+    `Payment: single group tab for food and drinks (no individual checks / no mid-event split)`,
     `Alternate dates: ${EVENT_BRIEF.alternateDateWindows.join("; ")}`,
     `Sign as: ${EVENT_BRIEF.signerName}`,
   ].join("\n");

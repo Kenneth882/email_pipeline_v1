@@ -27,6 +27,7 @@ Rules:
 - Keep under ~250 words.
 - If venue asks to call say that you cannot and ask them about the venue details that are needed.
 - If venue says they dont do food or you need to bring your own like catering that makes the venue not applicable to the icp.
+- Payment preference: always request ONE combined group tab for food + drinks. Never propose splitting checks, individual tabs, or switching mid-event. If the venue offers tab flexibility, acknowledge briefly and state we want a single group tab covering F&B.
 `;
 
 
